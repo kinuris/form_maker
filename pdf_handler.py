@@ -77,6 +77,7 @@ class PDFHandler:
         
         from models import FormField, FieldType
         detected_fields = []
+        seen_fields = set()  # Track field names and positions to avoid duplicates
         
         try:
             # Iterate through all pages
@@ -97,9 +98,20 @@ class PDFHandler:
                         rect = widget.rect
                         pdf_rect = [rect.x0, rect.y0, rect.x1, rect.y1]
                         
+                        # Create unique identifier for this field (name + position + page)
+                        field_name = widget.field_name or f"field_{len(detected_fields) + 1}"
+                        field_id = (field_name, page_num, tuple(pdf_rect))
+                        
+                        # Skip if we've already seen this field
+                        if field_id in seen_fields:
+                            print(f"Skipping duplicate field: '{field_name}' on page {page_num + 1}")
+                            continue
+                        
+                        seen_fields.add(field_id)
+                        
                         # Create FormField object
                         field = FormField(
-                            name=widget.field_name or f"field_{len(detected_fields) + 1}",
+                            name=field_name,
                             type=field_type,
                             page_num=page_num,
                             rect=pdf_rect.copy(),  # Store PDF coordinates
@@ -305,7 +317,7 @@ class PDFHandler:
         Returns:
             True if saved successfully, False otherwise
         """
-        if not self.pdf_doc or not self.coord_transformer:
+        if not self.pdf_doc:
             return False
         
         try:
@@ -369,10 +381,12 @@ class PDFHandler:
                 # Remove each widget
                 for widget in widgets:
                     try:
+                        widget_name = getattr(widget, 'field_name', f'widget_{widget.xref}')
                         page.delete_widget(widget)
-                        print(f"Removed existing field: {widget.field_name}")
+                        print(f"Removed existing field: {widget_name}")
                     except Exception as e:
-                        print(f"Warning: Could not remove widget {widget.field_name}: {e}")
+                        widget_name = getattr(widget, 'field_name', f'widget_{getattr(widget, "xref", "unknown")}')
+                        print(f"Warning: Could not remove widget {widget_name}: {e}")
                         
         except Exception as e:
             print(f"Warning: Error removing existing fields: {e}")

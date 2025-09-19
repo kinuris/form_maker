@@ -548,8 +548,8 @@ class PdfFormMakerApp:
     
     def save_pdf(self):
         """Save the PDF with form fields"""
-        if not self.pdf_handler.pdf_doc or not self.field_manager.fields:
-            messagebox.showwarning("Warning", "No PDF loaded or no fields to save.")
+        if not self.pdf_handler.pdf_doc:
+            messagebox.showwarning("Warning", "No PDF loaded.")
             return
         
         file_path = filedialog.asksaveasfilename(
@@ -561,13 +561,21 @@ class PdfFormMakerApp:
         if not file_path:
             return
         
-        # Save the PDF with fields
+        # Save the PDF with fields (even if empty - this removes all fields)
         if self.pdf_handler.save_pdf_with_fields(file_path, self.field_manager.fields):
-            messagebox.showinfo(
-                "Success",
-                f"PDF saved successfully!\\nFile: {file_path}\\nFields added: {len(self.field_manager.fields)}"
-            )
-            self.status_bar.set_status(f"PDF saved: {len(self.field_manager.fields)} fields added")
+            field_count = len(self.field_manager.fields)
+            if field_count > 0:
+                messagebox.showinfo(
+                    "Success",
+                    f"PDF saved successfully!\\nFile: {file_path}\\nFields added: {field_count}"
+                )
+                self.status_bar.set_status(f"PDF saved: {field_count} fields added")
+            else:
+                messagebox.showinfo(
+                    "Success",
+                    f"PDF saved successfully!\\nFile: {file_path}\\nAll form fields removed"
+                )
+                self.status_bar.set_status("PDF saved: all form fields removed")
         else:
             messagebox.showerror("Error", "Failed to save PDF")
     
