@@ -667,9 +667,11 @@ class PdfFormMakerApp:
         page_label = tk.Label(dialog, text=f"Page {field.page_num + 1}", font=('Arial', 10))
         page_label.pack(anchor='w', padx=20, pady=(0, 10))
         
-        # Options for dropdown
+        # Type-specific options
         format_frame = None
         format_var = None
+        image_path_var = None
+        
         if field.type == FieldType.DATE:
             tk.Label(dialog, text="Date Format:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
             format_var = tk.StringVar(value=field.date_format or "MM/DD/YYYY")
@@ -695,6 +697,49 @@ class PdfFormMakerApp:
                               font=('Arial', 8), relief='flat', bg='#e0e0e0')
                 btn.pack(side='left', padx=(0, 5), pady=2)
         
+        elif field.type == FieldType.IMAGE:
+            tk.Label(dialog, text="Image File:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
+            
+            # Image path display and selection
+            image_frame = tk.Frame(dialog)
+            image_frame.pack(fill='x', padx=20, pady=(0, 10))
+            
+            image_path_var = tk.StringVar(value=getattr(field, 'image_path', '') or "No image selected")
+            image_path_entry = tk.Entry(image_frame, textvariable=image_path_var, font=('Arial', 10), state='readonly')
+            image_path_entry.pack(side='left', fill='x', expand=True, padx=(0, 5))
+            
+            def select_image():
+                from tkinter import filedialog
+                file_path = filedialog.askopenfilename(
+                    title="Select Image File",
+                    filetypes=[
+                        ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.tiff"),
+                        ("PNG files", "*.png"),
+                        ("JPEG files", "*.jpg *.jpeg"),
+                        ("GIF files", "*.gif"),
+                        ("All files", "*.*")
+                    ]
+                )
+                if file_path:
+                    image_path_var.set(file_path)
+            
+            browse_btn = tk.Button(image_frame, text="Browse...", command=select_image, 
+                                 font=('Arial', 9), bg='#2196F3', fg='white')
+            browse_btn.pack(side='right')
+            
+            # Show current image info if available
+            if hasattr(field, 'image_path') and field.image_path:
+                import os
+                try:
+                    file_size = os.path.getsize(field.image_path)
+                    size_mb = file_size / (1024 * 1024)
+                    info_text = f"Current: {os.path.basename(field.image_path)} ({size_mb:.1f} MB)"
+                except:
+                    info_text = f"Current: {os.path.basename(field.image_path)}"
+                
+                info_label = tk.Label(dialog, text=info_text, font=('Arial', 8), fg='#666666')
+                info_label.pack(anchor='w', padx=20, pady=(0, 5))
+        
         # Buttons
         button_frame = tk.Frame(dialog)
         button_frame.pack(fill='x', padx=20, pady=20)
@@ -710,6 +755,14 @@ class PdfFormMakerApp:
                 new_format = format_combo.get().strip()
                 if new_format:
                     field.date_format = new_format
+            
+            # Update image path for image fields
+            if field.type == FieldType.IMAGE and image_path_var:
+                new_image_path = image_path_var.get().strip()
+                if new_image_path and new_image_path != "No image selected":
+                    field.image_path = new_image_path
+                    # Clear image_data when new path is set
+                    field.image_data = None
             
             # Refresh display
             self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)

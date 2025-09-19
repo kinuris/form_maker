@@ -14,6 +14,7 @@ class FieldType(Enum):
     CHECKBOX = "checkbox"
     DATE = "date"
     SIGNATURE = "signature"
+    IMAGE = "image"
 
 
 @dataclass
@@ -28,10 +29,12 @@ class FormField:
     # Type-specific properties
     date_format: Optional[str] = None  # For date fields (e.g., "MM/DD/YYYY", "DD/MM/YYYY")
     value: Optional[str] = None  # Default value for fields
+    image_path: Optional[str] = None  # For image fields - path to image file
+    image_data: Optional[bytes] = None  # For image fields - binary image data
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert field to dictionary for serialization"""
-        return {
+        data = {
             'name': self.name,
             'type': self.type.value,
             'page_num': self.page_num,
@@ -39,11 +42,18 @@ class FormField:
             'date_format': self.date_format,
             'value': self.value
         }
+        
+        # Handle image fields - store path but not binary data for JSON serialization
+        if self.type == FieldType.IMAGE:
+            data['image_path'] = self.image_path
+            # Note: image_data (bytes) is not serialized to avoid JSON issues
+        
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'FormField':
         """Create field from dictionary"""
-        return cls(
+        field = cls(
             name=data['name'],
             type=FieldType(data['type']),
             page_num=data['page_num'],
@@ -51,6 +61,13 @@ class FormField:
             date_format=data.get('date_format'),
             value=data.get('value')
         )
+        
+        # Handle image fields
+        if field.type == FieldType.IMAGE:
+            field.image_path = data.get('image_path')
+            # image_data will be loaded separately when needed
+        
+        return field
 
 
 class AppConstants:
@@ -78,7 +95,8 @@ class AppConstants:
         FieldType.TEXT: (100, 30),
         FieldType.CHECKBOX: (20, 20),
         FieldType.DATE: (120, 30),
-        FieldType.SIGNATURE: (150, 50)
+        FieldType.SIGNATURE: (150, 50),
+        FieldType.IMAGE: (100, 100)
     }
     
     # Colors
@@ -86,7 +104,8 @@ class AppConstants:
         FieldType.TEXT: '#2196F3',
         FieldType.CHECKBOX: '#FF9800',
         FieldType.DATE: '#4CAF50',
-        FieldType.SIGNATURE: '#795548'
+        FieldType.SIGNATURE: '#795548',
+        FieldType.IMAGE: '#9C27B0'
     }
     
     SELECTION_COLOR = '#0066CC'

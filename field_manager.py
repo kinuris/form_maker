@@ -76,6 +76,9 @@ class FieldManager:
         if field_type == FieldType.DATE:
             field.date_format = "MM/DD/YYYY"  # Default format
             field.value = ""  # Default empty value
+        elif field_type == FieldType.IMAGE:
+            field.image_path = None  # No image selected initially
+            field.image_data = None  # No image data initially
         
         # Add to fields list
         self.fields.append(field)
@@ -237,21 +240,44 @@ class FieldManager:
         outline_width = 3 if field == self.selected_field else 2
         
         # Draw main rectangle
-        field.canvas_id = self.canvas.create_rectangle(
-            x1, y1, x2, y2,
-            outline=outline_color,
-            width=outline_width,
-            fill='',
-            tags=f"field_{field.name}"
-        )
+        if field.type == FieldType.IMAGE:
+            # For image fields, use dashed border to indicate placeholder
+            field.canvas_id = self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                outline=outline_color,
+                width=outline_width,
+                fill='lightgray',  # Light gray background for image placeholder
+                stipple='gray50',  # Pattern to indicate image area
+                tags=f"field_{field.name}"
+            )
+        else:
+            # Regular fields
+            field.canvas_id = self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                outline=outline_color,
+                width=outline_width,
+                fill='',
+                tags=f"field_{field.name}"
+            )
         
         # Draw field type label
         label_x = x1 + 3
         label_y = y1 + 3
+        
+        # Special label for image fields
+        if field.type == FieldType.IMAGE:
+            label_text = "📷 Image"
+            if hasattr(field, 'image_path') and field.image_path:
+                import os
+                filename = os.path.basename(field.image_path)
+                label_text = f"📷 {filename}"
+        else:
+            label_text = field.type.value
+        
         self.canvas.create_text(
             label_x, label_y,
             anchor='nw',
-            text=field.type.value,
+            text=label_text,
             fill=outline_color,
             font=('Arial', 8, 'bold'),
             tags=f"field_{field.name}_label"

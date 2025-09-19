@@ -94,11 +94,13 @@ class PDFHandler:
                         if field_type is None:
                             continue  # Skip unsupported field types
                         
-                        # Enhanced detection for DATE fields
+                        # Enhanced detection for DATE and IMAGE fields
                         # Check if this is actually a DATE field based on field name pattern
                         field_name = widget.field_name or f"field_{len(detected_fields) + 1}"
                         if field_type == FieldType.TEXT and self._is_date_field(field_name):
                             field_type = FieldType.DATE
+                        elif field_type == FieldType.TEXT and self._is_image_field(field_name):
+                            field_type = FieldType.IMAGE
                         
                         # Get field rectangle in PDF coordinates
                         rect = widget.rect
@@ -231,8 +233,22 @@ class PDFHandler:
         name_lower = field_name.lower()
         return any(keyword in name_lower for keyword in date_keywords)
     
+    def _is_image_field(self, field_name):
+        """Check if a field is an IMAGE field based on its name pattern."""
+        if not field_name:
+            return False
+        
+        # Check for image type encoding in field name
+        if field_name.startswith("image_") or "_image_" in field_name:
+            return True
+        
+        # Check for common image field names
+        image_keywords = ["image", "photo", "picture", "pic", "logo", "avatar", "thumbnail"]
+        name_lower = field_name.lower()
+        return any(keyword in name_lower for keyword in image_keywords)
+    
     def _clean_field_name(self, field_name):
-        """Remove date type encoding from field name."""
+        """Remove field type encoding from field name."""
         if not field_name:
             return field_name
         
@@ -240,9 +256,19 @@ class PDFHandler:
         if field_name.startswith("date_"):
             return field_name[5:]  # Remove "date_" prefix
         
+        # Remove image type prefix
+        if field_name.startswith("image_"):
+            return field_name[6:]  # Remove "image_" prefix
+        
         # Remove date type infix
         if "_date_" in field_name:
             parts = field_name.split("_date_")
+            if len(parts) == 2:
+                return parts[0] + "_" + parts[1]
+        
+        # Remove image type infix
+        if "_image_" in field_name:
+            parts = field_name.split("_image_")
             if len(parts) == 2:
                 return parts[0] + "_" + parts[1]
         
@@ -511,8 +537,58 @@ class PDFHandler:
             widget.fill_color = (0.95, 0.95, 0.95)  # Light gray background
             widget.border_color = (0.5, 0.5, 0.5)
             widget.border_width = 2
+            
+        elif field.type == FieldType.IMAGE:
+            # IMAGE fields in PDFs work differently than web forms
+            # PDF forms don't support interactive file uploads like web pages
+            # Instead, we create informational fields that guide users
+            
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_name = f"image_{field.name}"
+            widget.text_font = "helv"
+            widget.text_fontsize = 10
+            widget.fill_color = (0.95, 0.95, 1.0)  # Very light blue background
+            widget.border_color = (0.6, 0.3, 0.8)  # Purple border for image fields
+            widget.border_width = 2
+            widget.text_color = (0.4, 0.4, 0.4)  # Gray text
+            
+            # Set instructions based on whether image is pre-loaded
+            if hasattr(field, 'image_path') and field.image_path:
+                try:
+                    # Embed the actual image as static content
+                    self._embed_image_from_path(page, rect, field.image_path)
+                    
+                    # Update field to show image is present
+                    import os
+                    filename = os.path.basename(field.image_path)
+                    widget.field_value = f"📷 {filename}"
+                    widget.fill_color = (0.9, 1.0, 0.9)  # Light green background
+                    widget.text_color = (0.2, 0.6, 0.2)  # Green text
+                    print(f"Embedded static image '{field.image_path}' for field '{field.name}'")
+                except Exception as e:
+                    print(f"Warning: Could not embed image '{field.image_path}': {e}")
+                    widget.field_value = "📷 [Image load failed]"
+            
+            elif hasattr(field, 'image_data') and field.image_data:
+                try:
+                    # Embed image data as static content
+                    self._embed_image_in_rect(page, rect, field.image_data)
+                    widget.field_value = "📷 Image attached"
+                    widget.fill_color = (0.9, 1.0, 0.9)  # Light green background
+                    widget.text_color = (0.2, 0.6, 0.2)  # Green text
+                    print(f"Embedded image data for field '{field.name}'")
+                except Exception as e:
+                    print(f"Warning: Could not embed image data: {e}")
+                    widget.field_value = "📷 [Image load failed]"
+            else:
+                # No image - provide clear instructions
+                widget.field_value = "📷 [Image placeholder - attach file using browser tools]"
+            
+            print(f"Created browser-compatible image field for '{field.name}'")
         
-        page.add_widget(widget)
+        # Add the widget to the page (IMAGE fields handle their own widget logic above)
+        if field.type != FieldType.IMAGE:
+            page.add_widget(widget)
     
     def get_page_rect(self, page_num: int = None) -> Optional[fitz.Rect]:
         """
@@ -760,3 +836,23 @@ if (!event.value || event.value.length === 0) {{
     // Note: We can't set placeholder text directly, but the blue border indicates date field
 }}
 """
+    
+    def _embed_image_from_path(self, page: fitz.Page, rect: fitz.Rect, image_path: str):
+        """Embed an image from file path into the PDF at the specified rectangle"""
+        try:
+            # Insert image into the PDF page at the specified rectangle
+            page.insert_image(rect, filename=image_path, keep_proportion=True)
+            print(f"Embedded image from {image_path}")
+        except Exception as e:
+            print(f"Error embedding image from {image_path}: {e}")
+            raise
+    
+    def _embed_image_in_rect(self, page: fitz.Page, rect: fitz.Rect, image_data: bytes):
+        """Embed image data into the PDF at the specified rectangle"""
+        try:
+            # Insert image data into the PDF page at the specified rectangle
+            page.insert_image(rect, stream=image_data, keep_proportion=True)
+            print(f"Embedded image data ({len(image_data)} bytes)")
+        except Exception as e:
+            print(f"Error embedding image data: {e}")
+            raise
