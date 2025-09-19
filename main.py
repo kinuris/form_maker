@@ -27,6 +27,7 @@ from pdf_handler import PDFHandler
 from field_manager import FieldManager
 from ui_components import ToolbarFrame, NavigationFrame, StatusBar, ScrollableCanvas, FieldsSidebar
 from history_manager import HistoryManager, CreateFieldCommand, DeleteFieldCommand, MoveFieldCommand, EditFieldCommand
+from pdf_form_inputter import PDFFormInputter
 
 
 class PdfFormMakerApp:
@@ -53,6 +54,9 @@ class PdfFormMakerApp:
         self.field_manager = FieldManager(self.canvas_frame.canvas, self.pdf_handler)
         self.history_manager = HistoryManager(max_history=25)
         
+        # Create PDF form inputter
+        self.pdf_inputter = PDFFormInputter(self.root)
+        
         # Bind events
         self._bind_events()
         
@@ -68,7 +72,8 @@ class PdfFormMakerApp:
             on_tool_select=self.select_tool,
             on_zoom_in=self.zoom_in,
             on_zoom_out=self.zoom_out,
-            on_fit_window=self.fit_to_window
+            on_fit_window=self.fit_to_window,
+            on_accomplish_pdf=self.accomplish_pdf
         )
         self.toolbar.pack(fill='x', padx=5, pady=5)
         
@@ -184,6 +189,14 @@ class PdfFormMakerApp:
                 messagebox.showerror("Error", "Failed to display PDF page")
         else:
             messagebox.showerror("Error", "Failed to open PDF file")
+    
+    def accomplish_pdf(self):
+        """Open the PDF form inputter to fill out an existing PDF form"""
+        try:
+            self.pdf_inputter.show_inputter()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open PDF form inputter: {str(e)}")
+            print(f"Error in accomplish_pdf: {e}")
     
     def select_tool(self, field_type: FieldType):
         """Select a form field tool"""

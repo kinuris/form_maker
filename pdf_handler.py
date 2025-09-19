@@ -248,17 +248,25 @@ class PDFHandler:
         return any(keyword in name_lower for keyword in image_keywords)
     
     def _clean_field_name(self, field_name):
-        """Remove field type encoding from field name."""
+        """Remove field type encoding from field name, preserving original identity."""
         if not field_name:
             return field_name
+        
+        # For IMAGE fields, we need to be more careful with name cleaning
+        # because we use the name to reconnect fields when loading
         
         # Remove date type prefix
         if field_name.startswith("date_"):
             return field_name[5:]  # Remove "date_" prefix
         
-        # Remove image type prefix
+        # Remove image type prefix - but preserve the original field identity
         if field_name.startswith("image_"):
-            return field_name[6:]  # Remove "image_" prefix
+            # Extract the original field name
+            original_name = field_name[6:]  # Remove "image_" prefix
+            # If the original name is empty or seems auto-generated, use the full name
+            if not original_name or original_name.startswith("field_"):
+                return field_name  # Keep the full prefixed name for proper identification
+            return original_name
         
         # Remove date type infix
         if "_date_" in field_name:
@@ -266,7 +274,7 @@ class PDFHandler:
             if len(parts) == 2:
                 return parts[0] + "_" + parts[1]
         
-        # Remove image type infix
+        # Remove image type infix - but preserve field identity
         if "_image_" in field_name:
             parts = field_name.split("_image_")
             if len(parts) == 2:
@@ -586,9 +594,8 @@ class PDFHandler:
             
             print(f"Created browser-compatible image field for '{field.name}'")
         
-        # Add the widget to the page (IMAGE fields handle their own widget logic above)
-        if field.type != FieldType.IMAGE:
-            page.add_widget(widget)
+        # Add the widget to the page (all fields including IMAGE need widgets for detection)
+        page.add_widget(widget)
     
     def get_page_rect(self, page_num: int = None) -> Optional[fitz.Rect]:
         """

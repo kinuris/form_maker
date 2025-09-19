@@ -16,7 +16,7 @@ class ToolbarFrame(tk.Frame):
     
     def __init__(self, parent, on_open_pdf: Callable, on_tool_select: Callable, 
                  on_zoom_in: Callable = None, on_zoom_out: Callable = None, 
-                 on_fit_window: Callable = None):
+                 on_fit_window: Callable = None, on_accomplish_pdf: Callable = None):
         """
         Initialize the toolbar
         
@@ -27,6 +27,7 @@ class ToolbarFrame(tk.Frame):
             on_zoom_in: Callback for zoom in
             on_zoom_out: Callback for zoom out
             on_fit_window: Callback for fit to window
+            on_accomplish_pdf: Callback for PDF form inputter
         """
         super().__init__(parent, bg='#e0e0e0', height=AppConstants.TOOLBAR_HEIGHT)
         self.pack_propagate(False)
@@ -35,6 +36,7 @@ class ToolbarFrame(tk.Frame):
         self.on_zoom_in = on_zoom_in
         self.on_zoom_out = on_zoom_out
         self.on_fit_window = on_fit_window
+        self.on_accomplish_pdf = on_accomplish_pdf
         self.selected_tool: Optional[FieldType] = None
         self.tool_buttons: Dict[FieldType, tk.Button] = {}
         
@@ -52,6 +54,19 @@ class ToolbarFrame(tk.Frame):
             font=('Arial', 10, 'bold')
         )
         self.open_btn.pack(side='left', padx=5, pady=10)
+        
+        # Accomplish PDF button (form inputter)
+        if self.on_accomplish_pdf:
+            self.accomplish_btn = tk.Button(
+                self,
+                text="Accomplish PDF",
+                command=self.on_accomplish_pdf,
+                bg='#2196F3',
+                fg='white',
+                font=('Arial', 10, 'bold'),
+                relief='raised'
+            )
+            self.accomplish_btn.pack(side='left', padx=5, pady=10)
         
         # Separator
         separator1 = tk.Frame(self, width=2, bg='#ccc')
