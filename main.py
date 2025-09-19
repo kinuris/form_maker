@@ -48,7 +48,7 @@ class PdfFormMakerApp:
         
         # Create core handlers
         self.pdf_handler = PDFHandler(self.canvas_frame.canvas)
-        self.field_manager = FieldManager(self.canvas_frame.canvas)
+        self.field_manager = FieldManager(self.canvas_frame.canvas, self.pdf_handler)
         
         # Bind events
         self._bind_events()
@@ -58,16 +58,22 @@ class PdfFormMakerApp:
     
     def _create_ui_components(self):
         """Create all UI components"""
-        # Top toolbar
+        # Top toolbar with zoom controls
         self.toolbar = ToolbarFrame(
             self.root,
             on_open_pdf=self.open_pdf,
-            on_tool_select=self.select_tool
+            on_tool_select=self.select_tool,
+            on_zoom_in=self.zoom_in,
+            on_zoom_out=self.zoom_out,
+            on_fit_window=self.fit_to_window
         )
         self.toolbar.pack(fill='x', padx=5, pady=5)
         
-        # Main canvas area
-        self.canvas_frame = ScrollableCanvas(self.root)
+        # Main canvas area with mouse wheel zoom
+        self.canvas_frame = ScrollableCanvas(
+            self.root,
+            on_mouse_wheel_zoom=self.handle_mouse_wheel_zoom
+        )
         self.canvas_frame.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Bottom navigation
@@ -79,7 +85,7 @@ class PdfFormMakerApp:
         )
         self.navigation.pack(fill='x', padx=5, pady=5)
         
-        # Status bar
+        # Status bar with zoom display
         self.status_bar = StatusBar(self.root)
         self.status_bar.pack(fill='x', side='bottom')
     
@@ -90,6 +96,13 @@ class PdfFormMakerApp:
         self.root.bind('<Control-o>', lambda e: self.open_pdf())
         self.root.bind('<Control-s>', lambda e: self.save_pdf())
         self.root.bind('<Escape>', lambda e: self.clear_selection())
+        
+        # Arrow key panning (bind to canvas for focus)
+        self.canvas_frame.canvas.bind('<Left>', self.canvas_frame.handle_keyboard_pan)
+        self.canvas_frame.canvas.bind('<Right>', self.canvas_frame.handle_keyboard_pan)
+        self.canvas_frame.canvas.bind('<Up>', self.canvas_frame.handle_keyboard_pan)
+        self.canvas_frame.canvas.bind('<Down>', self.canvas_frame.handle_keyboard_pan)
+        
         self.root.focus_set()
         
         # Canvas mouse events
@@ -124,6 +137,7 @@ class PdfFormMakerApp:
                 
                 # Update UI
                 self._update_navigation()
+                self._update_zoom_display()  # Initialize zoom display
                 self.navigation.set_save_enabled(True)
                 self.status_bar.set_status(f"PDF loaded: {self.pdf_handler.total_pages} pages - Use toolbar to add form fields")
                 
@@ -311,6 +325,36 @@ class PdfFormMakerApp:
             self.status_bar.set_status(f"PDF saved: {len(self.field_manager.fields)} fields added")
         else:
             messagebox.showerror("Error", "Failed to save PDF")
+    
+    # Zoom control methods
+    def zoom_in(self):
+        """Zoom in on the PDF"""
+        if self.pdf_handler.zoom_in():
+            self._update_zoom_display()
+            self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+    
+    def zoom_out(self):
+        """Zoom out on the PDF"""
+        if self.pdf_handler.zoom_out():
+            self._update_zoom_display()
+            self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+    
+    def fit_to_window(self):
+        """Fit PDF to window"""
+        if self.pdf_handler.fit_to_window():
+            self._update_zoom_display()
+            self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+    
+    def handle_mouse_wheel_zoom(self, event):
+        """Handle mouse wheel zoom"""
+        if self.pdf_handler.handle_mouse_wheel_zoom(event):
+            self._update_zoom_display()
+            self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+    
+    def _update_zoom_display(self):
+        """Update the zoom percentage in status bar"""
+        zoom_percentage = self.pdf_handler.get_zoom_percentage()
+        self.status_bar.set_zoom(zoom_percentage)
     
     def on_closing(self):
         """Handle application closing"""

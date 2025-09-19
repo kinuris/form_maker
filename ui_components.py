@@ -14,7 +14,9 @@ from models import FieldType, AppConstants
 class ToolbarFrame(tk.Frame):
     """Toolbar frame containing field tools and open PDF button"""
     
-    def __init__(self, parent, on_open_pdf: Callable, on_tool_select: Callable):
+    def __init__(self, parent, on_open_pdf: Callable, on_tool_select: Callable, 
+                 on_zoom_in: Callable = None, on_zoom_out: Callable = None, 
+                 on_fit_window: Callable = None):
         """
         Initialize the toolbar
         
@@ -22,11 +24,17 @@ class ToolbarFrame(tk.Frame):
             parent: Parent widget
             on_open_pdf: Callback for opening PDF
             on_tool_select: Callback for tool selection
+            on_zoom_in: Callback for zoom in
+            on_zoom_out: Callback for zoom out
+            on_fit_window: Callback for fit to window
         """
         super().__init__(parent, bg='#e0e0e0', height=AppConstants.TOOLBAR_HEIGHT)
         self.pack_propagate(False)
         
         self.on_tool_select = on_tool_select
+        self.on_zoom_in = on_zoom_in
+        self.on_zoom_out = on_zoom_out
+        self.on_fit_window = on_fit_window
         self.selected_tool: Optional[FieldType] = None
         self.tool_buttons: Dict[FieldType, tk.Button] = {}
         
@@ -71,6 +79,55 @@ class ToolbarFrame(tk.Frame):
             )
             btn.pack(side='left', padx=2, pady=10)
             self.tool_buttons[field_type] = btn
+        
+        # Add zoom controls
+        if self.on_zoom_in or self.on_zoom_out or self.on_fit_window:
+            # Separator
+            separator2 = tk.Frame(self, width=2, bg='#ccc')
+            separator2.pack(side='left', fill='y', padx=10, pady=10)
+            
+            # Zoom label
+            zoom_label = tk.Label(self, text="Zoom:", bg='#e0e0e0', font=('Arial', 9))
+            zoom_label.pack(side='left', padx=(5, 2), pady=10)
+            
+            # Zoom in button
+            if self.on_zoom_in:
+                self.zoom_in_btn = tk.Button(
+                    self,
+                    text="🔍+",
+                    command=self.on_zoom_in,
+                    bg='#2196F3',
+                    fg='white',
+                    font=('Arial', 9),
+                    width=3
+                )
+                self.zoom_in_btn.pack(side='left', padx=1, pady=10)
+            
+            # Zoom out button
+            if self.on_zoom_out:
+                self.zoom_out_btn = tk.Button(
+                    self,
+                    text="🔍-",
+                    command=self.on_zoom_out,
+                    bg='#2196F3',
+                    fg='white',
+                    font=('Arial', 9),
+                    width=3
+                )
+                self.zoom_out_btn.pack(side='left', padx=1, pady=10)
+            
+            # Fit to window button
+            if self.on_fit_window:
+                self.fit_btn = tk.Button(
+                    self,
+                    text="Fit",
+                    command=self.on_fit_window,
+                    bg='#2196F3',
+                    fg='white',
+                    font=('Arial', 9),
+                    width=4
+                )
+                self.fit_btn.pack(side='left', padx=1, pady=10)
     
     def select_tool(self, field_type: FieldType):
         """Select a tool and update button appearance"""
@@ -180,6 +237,7 @@ class StatusBar(tk.Frame):
         super().__init__(parent, bg='#d0d0d0', height=AppConstants.STATUS_BAR_HEIGHT)
         self.pack_propagate(False)
         
+        # Left side - status message
         self.status_label = tk.Label(
             self,
             text="Ready - Open a PDF to get started",
@@ -187,19 +245,45 @@ class StatusBar(tk.Frame):
             anchor='w',
             font=('Arial', 9)
         )
-        self.status_label.pack(fill='x', padx=5, pady=3)
+        self.status_label.pack(side='left', fill='x', expand=True, padx=5, pady=3)
+        
+        # Right side - zoom percentage
+        self.zoom_label = tk.Label(
+            self,
+            text="100%",
+            bg='#d0d0d0',
+            anchor='e',
+            font=('Arial', 9),
+            width=8
+        )
+        self.zoom_label.pack(side='right', padx=5, pady=3)
     
     def set_status(self, message: str):
         """Set the status message"""
         self.status_label.config(text=message)
+    
+    def set_zoom(self, zoom_percentage: str):
+        """Set the zoom percentage display"""
+        self.zoom_label.config(text=zoom_percentage)
 
 
 class ScrollableCanvas(tk.Frame):
     """Canvas with scrollbars for PDF display"""
     
-    def __init__(self, parent):
-        """Initialize the scrollable canvas"""
+    def __init__(self, parent, on_mouse_wheel_zoom: Callable = None):
+        """
+        Initialize the scrollable canvas
+        
+        Args:
+            parent: Parent widget
+            on_mouse_wheel_zoom: Callback for mouse wheel zoom
+        """
         super().__init__(parent, bg='white')
+        
+        self.on_mouse_wheel_zoom = on_mouse_wheel_zoom
+        self.panning = False
+        self.pan_start_x = 0
+        self.pan_start_y = 0
         
         # Create canvas
         self.canvas = tk.Canvas(
@@ -218,10 +302,116 @@ class ScrollableCanvas(tk.Frame):
             xscrollcommand=self.h_scrollbar.set
         )
         
+        # Bind mouse wheel events for zoom
+        if self.on_mouse_wheel_zoom:
+            self.canvas.bind("<Control-MouseWheel>", self._on_ctrl_mouse_wheel)
+            self.canvas.bind("<Control-Button-4>", self._on_ctrl_mouse_wheel)  # Linux
+            self.canvas.bind("<Control-Button-5>", self._on_ctrl_mouse_wheel)  # Linux
+        
+        # Bind panning events (middle mouse button)
+        self.canvas.bind("<Button-2>", self._start_pan)  # Middle mouse button press
+        self.canvas.bind("<B2-Motion>", self._do_pan)    # Middle mouse button drag
+        self.canvas.bind("<ButtonRelease-2>", self._end_pan)  # Middle mouse button release
+        
+        # Allow canvas to receive focus for keyboard events
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
+        
         # Pack scrollbars and canvas
         self.v_scrollbar.pack(side='right', fill='y')
         self.h_scrollbar.pack(side='bottom', fill='x')
         self.canvas.pack(side='left', fill='both', expand=True)
+    
+    def _on_ctrl_mouse_wheel(self, event):
+        """Handle Ctrl+mouse wheel for zooming"""
+        if self.on_mouse_wheel_zoom:
+            self.on_mouse_wheel_zoom(event)
+            return "break"  # Prevent default scrolling
+    
+    def _start_pan(self, event):
+        """Start panning with middle mouse button"""
+        self.panning = True
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+        self.canvas.config(cursor="fleur")  # Change cursor to indicate panning
+    
+    def _do_pan(self, event):
+        """Perform panning"""
+        if not self.panning:
+            return
+        
+        # Calculate pan distance
+        dx = event.x - self.pan_start_x
+        dy = event.y - self.pan_start_y
+        
+        # Get current view
+        x_view = self.canvas.xview()
+        y_view = self.canvas.yview()
+        
+        # Get scroll region
+        scroll_region = self.canvas.cget("scrollregion").split()
+        if len(scroll_region) == 4:
+            scroll_width = float(scroll_region[2])
+            scroll_height = float(scroll_region[3])
+            
+            # Calculate new positions
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            # Convert pixel movement to scroll fraction
+            if scroll_width > canvas_width:
+                x_fraction = -dx / scroll_width
+                new_x = max(0, min(1 - (canvas_width / scroll_width), x_view[0] + x_fraction))
+                self.canvas.xview_moveto(new_x)
+            
+            if scroll_height > canvas_height:
+                y_fraction = -dy / scroll_height
+                new_y = max(0, min(1 - (canvas_height / scroll_height), y_view[0] + y_fraction))
+                self.canvas.yview_moveto(new_y)
+        
+        # Update pan start position
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+    
+    def _end_pan(self, event):
+        """End panning"""
+        self.panning = False
+        self.canvas.config(cursor="")  # Reset cursor
+    
+    def handle_keyboard_pan(self, event):
+        """Handle keyboard panning (arrow keys)"""
+        key = event.keysym
+        pan_distance = 0.05  # Fraction to pan
+        
+        if key == "Left":
+            x_view = self.canvas.xview()
+            new_x = max(0, x_view[0] - pan_distance)
+            self.canvas.xview_moveto(new_x)
+            return "break"
+        elif key == "Right":
+            x_view = self.canvas.xview()
+            canvas_width = self.canvas.winfo_width()
+            scroll_region = self.canvas.cget("scrollregion").split()
+            if len(scroll_region) == 4:
+                scroll_width = float(scroll_region[2])
+                max_x = max(0, 1 - (canvas_width / scroll_width))
+                new_x = min(max_x, x_view[0] + pan_distance)
+                self.canvas.xview_moveto(new_x)
+            return "break"
+        elif key == "Up":
+            y_view = self.canvas.yview()
+            new_y = max(0, y_view[0] - pan_distance)
+            self.canvas.yview_moveto(new_y)
+            return "break"
+        elif key == "Down":
+            y_view = self.canvas.yview()
+            canvas_height = self.canvas.winfo_height()
+            scroll_region = self.canvas.cget("scrollregion").split()
+            if len(scroll_region) == 4:
+                scroll_height = float(scroll_region[3])
+                max_y = max(0, 1 - (canvas_height / scroll_height))
+                new_y = min(max_y, y_view[0] + pan_distance)
+                self.canvas.yview_moveto(new_y)
+            return "break"
     
     def bind_events(self, **event_handlers):
         """Bind events to the canvas"""
@@ -230,7 +420,8 @@ class ScrollableCanvas(tk.Frame):
     
     def set_cursor(self, cursor: str):
         """Set canvas cursor"""
-        self.canvas.config(cursor=cursor)
+        if not self.panning:  # Don't override panning cursor
+            self.canvas.config(cursor=cursor)
     
     def get_canvas_coords(self, event):
         """Get canvas coordinates from event (accounting for scrolling)"""

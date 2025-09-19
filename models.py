@@ -67,6 +67,16 @@ class AppConstants:
     TOOLBAR_HEIGHT = 60
     NAV_BAR_HEIGHT = 50
     
+    # Zoom settings
+    MIN_ZOOM = 0.25  # 25% minimum zoom
+    MAX_ZOOM = 5.0   # 500% maximum zoom
+    DEFAULT_ZOOM = 1.0  # 100% default zoom
+    ZOOM_STEP = 0.25    # 25% zoom increment
+    ZOOM_WHEEL_FACTOR = 0.1  # Mouse wheel zoom sensitivity
+    
+    # PDF rendering settings
+    PDF_DPI = 150  # DPI for PDF rendering quality
+    
     # Field defaults
     DEFAULT_FIELD_SIZES = {
         FieldType.TEXT: (100, 30),
@@ -110,17 +120,23 @@ class MouseState:
     def __init__(self):
         self.dragging = False
         self.resizing = False
+        self.panning = False  # Add panning state
         self.resize_handle = None
         self.drag_start_x = 0
         self.drag_start_y = 0
+        self.pan_start_x = 0  # Panning start coordinates
+        self.pan_start_y = 0
     
     def reset(self):
         """Reset all mouse state"""
         self.dragging = False
         self.resizing = False
+        self.panning = False
         self.resize_handle = None
         self.drag_start_x = 0
         self.drag_start_y = 0
+        self.pan_start_x = 0
+        self.pan_start_y = 0
     
     def start_drag(self, x, y):
         """Start dragging operation"""
@@ -134,3 +150,52 @@ class MouseState:
         self.resize_handle = handle
         self.drag_start_x = x
         self.drag_start_y = y
+    
+    def start_pan(self, x, y):
+        """Start panning operation"""
+        self.panning = True
+        self.pan_start_x = x
+        self.pan_start_y = y
+
+
+class ZoomState:
+    """Manages zoom and view state"""
+    
+    def __init__(self):
+        self.zoom_level = AppConstants.DEFAULT_ZOOM
+        self.fit_to_window = True  # Whether to fit PDF to window initially
+        self.center_x = 0  # Center point for zooming
+        self.center_y = 0
+    
+    def set_zoom(self, new_zoom, center_x=None, center_y=None):
+        """Set zoom level with optional center point"""
+        # Clamp zoom to valid range
+        self.zoom_level = max(AppConstants.MIN_ZOOM, 
+                             min(AppConstants.MAX_ZOOM, new_zoom))
+        
+        if center_x is not None:
+            self.center_x = center_x
+        if center_y is not None:
+            self.center_y = center_y
+        
+        self.fit_to_window = False  # Manual zoom disables auto-fit
+        return self.zoom_level
+    
+    def zoom_in(self, center_x=None, center_y=None):
+        """Zoom in by one step"""
+        new_zoom = self.zoom_level + AppConstants.ZOOM_STEP
+        return self.set_zoom(new_zoom, center_x, center_y)
+    
+    def zoom_out(self, center_x=None, center_y=None):
+        """Zoom out by one step"""
+        new_zoom = self.zoom_level - AppConstants.ZOOM_STEP
+        return self.set_zoom(new_zoom, center_x, center_y)
+    
+    def reset_zoom(self):
+        """Reset to default zoom and fit to window"""
+        self.zoom_level = AppConstants.DEFAULT_ZOOM
+        self.fit_to_window = True
+    
+    def get_zoom_percentage(self):
+        """Get zoom level as percentage string"""
+        return f"{int(self.zoom_level * 100)}%"

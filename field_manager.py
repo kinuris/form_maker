@@ -13,14 +13,16 @@ from models import FormField, FieldType, AppConstants, MouseState
 class FieldManager:
     """Manages form fields - creation, selection, manipulation, and rendering"""
     
-    def __init__(self, canvas: tk.Canvas):
+    def __init__(self, canvas: tk.Canvas, pdf_handler=None):
         """
         Initialize the field manager
         
         Args:
             canvas: The tkinter Canvas widget for drawing fields
+            pdf_handler: Reference to PDFHandler for coordinate transformation
         """
         self.canvas = canvas
+        self.pdf_handler = pdf_handler
         self.fields: List[FormField] = []
         self.selected_field: Optional[FormField] = None
         self.field_counter = 0
@@ -45,13 +47,30 @@ class FieldManager:
         self.field_counter += 1
         field_name = f"{field_type.value}_{self.field_counter}"
         
-        # Create field
+        # Convert canvas coordinates to PDF coordinates for storage
+        canvas_rect = [x, y, x + width, y + height]
+        
+        # Store in PDF coordinates so field stays relative to PDF content
+        if self.pdf_handler and hasattr(self.pdf_handler, 'pdf_scale'):
+            # Convert to PDF coordinates
+            pdf_x1 = (canvas_rect[0] - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+            pdf_y1 = (canvas_rect[1] - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+            pdf_x2 = (canvas_rect[2] - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+            pdf_y2 = (canvas_rect[3] - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+            pdf_rect = [pdf_x1, pdf_y1, pdf_x2, pdf_y2]
+        else:
+            pdf_rect = canvas_rect.copy()
+        
+        # Create field with PDF coordinates (will convert to canvas when displaying)
         field = FormField(
             name=field_name,
             type=field_type,
             page_num=page_num,
-            rect=[x, y, x + width, y + height]
+            rect=pdf_rect  # Store PDF coordinates
         )
+        
+        # Store PDF coordinates as the authoritative position
+        field.pdf_rect = pdf_rect.copy()
         
         # Add type-specific properties
         if field_type == FieldType.DROPDOWN:
@@ -66,6 +85,43 @@ class FieldManager:
         print(f"Created field '{field.name}' at canvas ({x:.1f}, {y:.1f})")
         
         return field
+    
+    def get_canvas_rect_for_field(self, field: FormField) -> List[float]:
+        """
+        Get the current canvas coordinates for a field based on zoom level
+        
+        Args:
+            field: The form field
+            
+        Returns:
+            List of canvas coordinates [x1, y1, x2, y2] scaled for current zoom
+        """
+        # Get PDF coordinates (stored in field.rect)
+        pdf_rect = field.rect.copy()
+        
+        # Convert to canvas coordinates using current zoom
+        if self.pdf_handler and hasattr(self.pdf_handler, 'pdf_scale'):
+            canvas_x1 = pdf_rect[0] * self.pdf_handler.pdf_scale + AppConstants.CANVAS_OFFSET
+            canvas_y1 = pdf_rect[1] * self.pdf_handler.pdf_scale + AppConstants.CANVAS_OFFSET
+            canvas_x2 = pdf_rect[2] * self.pdf_handler.pdf_scale + AppConstants.CANVAS_OFFSET
+            canvas_y2 = pdf_rect[3] * self.pdf_handler.pdf_scale + AppConstants.CANVAS_OFFSET
+            return [canvas_x1, canvas_y1, canvas_x2, canvas_y2]
+        else:
+            # Fallback if no PDF handler
+            return pdf_rect.copy()
+    
+    def get_pdf_rect_for_field(self, field: FormField) -> List[float]:
+        """
+        Get PDF coordinates for a field (already stored in PDF coordinates)
+        
+        Args:
+            field: The form field
+            
+        Returns:
+            List of PDF coordinates [x1, y1, x2, y2]
+        """
+        # Field.rect now contains PDF coordinates directly
+        return field.rect.copy()
     
     def select_field(self, field: Optional[FormField]):
         """Select a field and update visual representation"""
@@ -132,7 +188,9 @@ class FieldManager:
             if field.page_num != page_num:
                 continue
             
-            x1, y1, x2, y2 = field.rect
+            # Use canvas coordinates for hit detection
+            canvas_rect = self.get_canvas_rect_for_field(field)
+            x1, y1, x2, y2 = canvas_rect
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return field
         
@@ -140,7 +198,9 @@ class FieldManager:
     
     def draw_field(self, field: FormField):
         """Draw a field on the canvas"""
-        x1, y1, x2, y2 = field.rect
+        # Use canvas coordinates for drawing
+        canvas_rect = self.get_canvas_rect_for_field(field)
+        x1, y1, x2, y2 = canvas_rect
         
         # Determine colors
         color = AppConstants.FIELD_COLORS[field.type]
@@ -174,7 +234,8 @@ class FieldManager:
     
     def draw_resize_handles(self, field: FormField):
         """Draw resize handles around a selected field"""
-        x1, y1, x2, y2 = field.rect
+        canvas_rect = self.get_canvas_rect_for_field(field)
+        x1, y1, x2, y2 = canvas_rect
         handle_size = AppConstants.HANDLE_SIZE
         
         # Calculate handle positions
@@ -217,7 +278,9 @@ class FieldManager:
         if not self.selected_field:
             return None
         
-        x1, y1, x2, y2 = self.selected_field.rect
+        # Use canvas coordinates for handle detection
+        canvas_rect = self.get_canvas_rect_for_field(self.selected_field)
+        x1, y1, x2, y2 = canvas_rect
         handle_size = AppConstants.HANDLE_SIZE
         
         handles = {
@@ -239,14 +302,22 @@ class FieldManager:
     
     def move_field(self, field: FormField, dx: float, dy: float):
         """
-        Move a field by the specified delta
+        Move a field by the specified delta (in canvas coordinates)
         
         Args:
             field: Field to move
-            dx, dy: Movement delta
+            dx, dy: Movement delta in canvas coordinates
         """
+        # Convert canvas delta to PDF delta
+        if self.pdf_handler and hasattr(self.pdf_handler, 'pdf_scale'):
+            pdf_dx = dx / self.pdf_handler.pdf_scale
+            pdf_dy = dy / self.pdf_handler.pdf_scale
+        else:
+            pdf_dx, pdf_dy = dx, dy
+        
+        # Update PDF coordinates
         x1, y1, x2, y2 = field.rect
-        field.rect = [x1 + dx, y1 + dy, x2 + dx, y2 + dy]
+        field.rect = [x1 + pdf_dx, y1 + pdf_dy, x2 + pdf_dx, y2 + pdf_dy]
         
         # Redraw the field
         self.canvas.delete(f"field_{field.name}")
@@ -257,24 +328,31 @@ class FieldManager:
     
     def resize_field(self, field: FormField, handle: str, x: float, y: float):
         """
-        Resize a field based on handle movement
+        Resize a field based on handle movement (canvas coordinates input)
         
         Args:
             field: Field to resize
             handle: Which handle is being dragged
-            x, y: New position of the handle
+            x, y: New position of the handle in canvas coordinates
         """
-        x1, y1, x2, y2 = field.rect
+        # Convert canvas coordinates to PDF coordinates
+        if self.pdf_handler and hasattr(self.pdf_handler, 'pdf_scale'):
+            pdf_x = (x - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+            pdf_y = (y - AppConstants.CANVAS_OFFSET) / self.pdf_handler.pdf_scale
+        else:
+            pdf_x, pdf_y = x, y
+        
+        x1, y1, x2, y2 = field.rect  # PDF coordinates
         
         # Update rectangle based on resize handle
         if 'n' in handle:
-            y1 = min(y, y2 - 10)  # Minimum height of 10
+            y1 = min(pdf_y, y2 - 10/self.pdf_handler.pdf_scale)  # Minimum height in PDF units
         if 's' in handle:
-            y2 = max(y, y1 + 10)
+            y2 = max(pdf_y, y1 + 10/self.pdf_handler.pdf_scale)
         if 'w' in handle:
-            x1 = min(x, x2 - 10)  # Minimum width of 10
+            x1 = min(pdf_x, x2 - 10/self.pdf_handler.pdf_scale)  # Minimum width in PDF units
         if 'e' in handle:
-            x2 = max(x, x1 + 10)
+            x2 = max(pdf_x, x1 + 10/self.pdf_handler.pdf_scale)
         
         field.rect = [x1, y1, x2, y2]
         

@@ -10,7 +10,7 @@ from PIL import Image, ImageTk
 import io
 import tkinter as tk
 from typing import Optional, List, Tuple
-from models import FormField, FieldType, AppConstants
+from models import FormField, FieldType, AppConstants, ZoomState
 from coordinate_utils import CoordinateTransformer, calculate_display_scale
 
 
@@ -31,6 +31,8 @@ class PDFHandler:
         self.pdf_scale = 1.0
         self.canvas_image = None
         self.coord_transformer: Optional[CoordinateTransformer] = None
+        self.zoom_state = ZoomState()  # Add zoom state management
+        self.page_images = {}  # Cache for rendered page images
     
     def load_pdf(self, file_path: str) -> bool:
         """
@@ -52,6 +54,10 @@ class PDFHandler:
             self.total_pages = len(self.pdf_doc)
             self.current_page = 0
             
+            # Clear page image cache and reset zoom
+            self.page_images.clear()
+            self.zoom_state.reset_zoom()
+            
             print(f"PDF loaded: {self.total_pages} pages")
             return True
             
@@ -61,7 +67,7 @@ class PDFHandler:
     
     def display_page(self, page_num: int = None) -> bool:
         """
-        Display a PDF page on the canvas
+        Display a PDF page on the canvas with zoom support
         
         Args:
             page_num: Page number to display (uses current_page if None)
@@ -83,7 +89,7 @@ class PDFHandler:
             page = self.pdf_doc[self.current_page]
             page_rect = page.rect
             
-            # Calculate scale to fit canvas
+            # Calculate scale considering zoom
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
             
@@ -92,28 +98,54 @@ class PDFHandler:
                 canvas_width = 800
                 canvas_height = 600
             
-            self.pdf_scale = calculate_display_scale(
-                (canvas_width, canvas_height),
-                (page_rect.width, page_rect.height)
-            )
+            if self.zoom_state.fit_to_window:
+                # Auto-fit to window
+                base_scale = calculate_display_scale(
+                    (canvas_width, canvas_height),
+                    (page_rect.width, page_rect.height)
+                )
+                self.zoom_state.zoom_level = base_scale  # Update zoom state to match auto-fit
+                self.pdf_scale = base_scale
+            else:
+                # Use current zoom level
+                self.pdf_scale = self.zoom_state.zoom_level
             
             print(f"Display scaling: canvas={canvas_width}x{canvas_height}, "
-                  f"PDF={page_rect.width}x{page_rect.height}, scale={self.pdf_scale:.3f}")
+                  f"PDF={page_rect.width}x{page_rect.height}, scale={self.pdf_scale:.3f}, "
+                  f"zoom={self.zoom_state.get_zoom_percentage()}")
             
-            # Create coordinate transformer
-            self.coord_transformer = CoordinateTransformer(
-                self.pdf_scale, 
-                AppConstants.CANVAS_OFFSET
-            )
+            # Create cache key including zoom level
+            cache_key = f"{self.current_page}_{self.pdf_scale:.3f}"
             
-            # Render page to pixmap
-            matrix = fitz.Matrix(self.pdf_scale, self.pdf_scale)
-            pixmap = page.get_pixmap(matrix=matrix)
+            # Check if we have this image cached
+            if cache_key not in self.page_images:
+                # Create coordinate transformer
+                self.coord_transformer = CoordinateTransformer(
+                    self.pdf_scale, 
+                    AppConstants.CANVAS_OFFSET
+                )
+                
+                # Render page to pixmap at higher resolution for better quality
+                matrix = fitz.Matrix(self.pdf_scale * AppConstants.PDF_DPI / 72, 
+                                   self.pdf_scale * AppConstants.PDF_DPI / 72)
+                pixmap = page.get_pixmap(matrix=matrix)
+                
+                # Convert to PIL Image then to PhotoImage
+                img_data = pixmap.tobytes("ppm")
+                pil_image = Image.open(io.BytesIO(img_data))
+                
+                # Resize if needed for display
+                display_width = int(page_rect.width * self.pdf_scale)
+                display_height = int(page_rect.height * self.pdf_scale)
+                if pil_image.size != (display_width, display_height):
+                    pil_image = pil_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+                
+                canvas_image = ImageTk.PhotoImage(pil_image)
+                self.page_images[cache_key] = canvas_image
+            else:
+                canvas_image = self.page_images[cache_key]
             
-            # Convert to PIL Image then to PhotoImage
-            img_data = pixmap.tobytes("ppm")
-            pil_image = Image.open(io.BytesIO(img_data))
-            self.canvas_image = ImageTk.PhotoImage(pil_image)
+            self.canvas_image = canvas_image
             
             # Clear canvas and display image
             self.canvas.delete("all")
@@ -126,8 +158,8 @@ class PDFHandler:
             )
             
             # Update canvas scroll region
-            scroll_width = pixmap.width + AppConstants.CANVAS_OFFSET * 2
-            scroll_height = pixmap.height + AppConstants.CANVAS_OFFSET * 2
+            scroll_width = int(page_rect.width * self.pdf_scale) + AppConstants.CANVAS_OFFSET * 2
+            scroll_height = int(page_rect.height * self.pdf_scale) + AppConstants.CANVAS_OFFSET * 2
             self.canvas.configure(scrollregion=(0, 0, scroll_width, scroll_height))
             
             return True
@@ -161,20 +193,16 @@ class PDFHandler:
                 page = temp_doc[field.page_num]
                 original_page_rect = page.rect
                 
-                # Convert canvas coordinates to PDF coordinates
-                pdf_rect = self.coord_transformer.canvas_to_pdf(
-                    field.rect, 
-                    original_page_rect.height
-                )
+                # Fields now store PDF coordinates directly, so use them as-is
+                pdf_rect = field.rect.copy()
                 
                 # Clamp to page boundaries
-                pdf_rect = self.coord_transformer.clamp_to_page(
-                    pdf_rect,
-                    original_page_rect.width,
-                    original_page_rect.height
-                )
+                pdf_rect[0] = max(0, min(pdf_rect[0], original_page_rect.width))
+                pdf_rect[1] = max(0, min(pdf_rect[1], original_page_rect.height))
+                pdf_rect[2] = max(pdf_rect[0] + 10, min(pdf_rect[2], original_page_rect.width))
+                pdf_rect[3] = max(pdf_rect[1] + 10, min(pdf_rect[3], original_page_rect.height))
                 
-                print(f"Field '{field.name}': canvas{field.rect} -> PDF{pdf_rect}")
+                print(f"Field '{field.name}': PDF coordinates {pdf_rect} (scale={self.pdf_scale:.3f})")
                 
                 # Create the rectangle for PyMuPDF
                 rect = fitz.Rect(*pdf_rect)
@@ -276,6 +304,8 @@ class PDFHandler:
         self.pdf_scale = 1.0
         self.canvas_image = None
         self.coord_transformer = None
+        self.page_images.clear()  # Clear image cache
+        self.zoom_state.reset_zoom()  # Reset zoom state
         
         # Clear canvas
         self.canvas.delete("all")
@@ -295,3 +325,104 @@ class PDFHandler:
         if self.can_go_to_page(self.current_page - 1):
             return self.display_page(self.current_page - 1)
         return False
+    
+    # Zoom control methods
+    def zoom_in(self, center_x=None, center_y=None) -> bool:
+        """
+        Zoom in by one step
+        
+        Args:
+            center_x: X coordinate to zoom around (optional)
+            center_y: Y coordinate to zoom around (optional)
+            
+        Returns:
+            True if zoom changed, False if at maximum zoom
+        """
+        old_zoom = self.zoom_state.zoom_level
+        self.zoom_state.zoom_in(center_x, center_y)
+        
+        if self.zoom_state.zoom_level != old_zoom:
+            self.display_page()  # Refresh display with new zoom
+            return True
+        return False
+    
+    def zoom_out(self, center_x=None, center_y=None) -> bool:
+        """
+        Zoom out by one step
+        
+        Args:
+            center_x: X coordinate to zoom around (optional)
+            center_y: Y coordinate to zoom around (optional)
+            
+        Returns:
+            True if zoom changed, False if at minimum zoom
+        """
+        old_zoom = self.zoom_state.zoom_level
+        self.zoom_state.zoom_out(center_x, center_y)
+        
+        if self.zoom_state.zoom_level != old_zoom:
+            self.display_page()  # Refresh display with new zoom
+            return True
+        return False
+    
+    def set_zoom(self, zoom_level: float, center_x=None, center_y=None) -> bool:
+        """
+        Set specific zoom level
+        
+        Args:
+            zoom_level: New zoom level
+            center_x: X coordinate to zoom around (optional)
+            center_y: Y coordinate to zoom around (optional)
+            
+        Returns:
+            True if zoom changed, False otherwise
+        """
+        old_zoom = self.zoom_state.zoom_level
+        self.zoom_state.set_zoom(zoom_level, center_x, center_y)
+        
+        if self.zoom_state.zoom_level != old_zoom:
+            self.display_page()  # Refresh display with new zoom
+            return True
+        return False
+    
+    def fit_to_window(self) -> bool:
+        """
+        Reset zoom to fit the window
+        
+        Returns:
+            True if zoom changed, False otherwise
+        """
+        old_fit = self.zoom_state.fit_to_window
+        self.zoom_state.reset_zoom()
+        
+        if not old_fit or self.zoom_state.zoom_level != self.pdf_scale:
+            self.display_page()  # Refresh display with auto-fit
+            return True
+        return False
+    
+    def get_zoom_percentage(self) -> str:
+        """Get current zoom level as percentage string"""
+        return self.zoom_state.get_zoom_percentage()
+    
+    def handle_mouse_wheel_zoom(self, event) -> bool:
+        """
+        Handle mouse wheel zoom
+        
+        Args:
+            event: Mouse wheel event
+            
+        Returns:
+            True if zoom changed, False otherwise
+        """
+        # Get mouse position for zoom center
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        
+        # Calculate zoom change
+        zoom_factor = AppConstants.ZOOM_WHEEL_FACTOR
+        if event.delta > 0:  # Zoom in
+            new_zoom = self.zoom_state.zoom_level + zoom_factor
+        else:  # Zoom out
+            new_zoom = self.zoom_state.zoom_level - zoom_factor
+        
+        return self.set_zoom(new_zoom, canvas_x, canvas_y)
