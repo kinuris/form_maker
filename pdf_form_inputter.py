@@ -12,6 +12,8 @@ import fitz  # PyMuPDF
 import os
 from typing import List, Dict, Any, Optional
 from models import FieldType
+from PIL import Image, ImageTk
+import io
 
 
 class PDFFormInputter:
@@ -26,6 +28,11 @@ class PDFFormInputter:
         self.form_fields = []
         self.field_widgets = {}  # Map field names to widgets
         self.field_values = {}   # Map field names to values
+        self.pdf_canvas = None   # Canvas for PDF display
+        self.pdf_images = {}     # Cached PDF page images
+        self.scale_factor = 1.0  # Scale factor for PDF display
+        self.canvas_offset_x = 0
+        self.canvas_offset_y = 0
         
     def show_inputter(self):
         """Show the PDF form inputter dialog"""
@@ -159,77 +166,89 @@ class PDFFormInputter:
         return field_name
     
     def _create_input_dialog(self):
-        """Create the form input dialog"""
+        """Create the enhanced input dialog with PDF backdrop"""
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title(f"Fill PDF Form - {os.path.basename(self.pdf_path)}")
-        self.dialog.geometry("600x700")
+        self.dialog.title(f"📋 Accomplish PDF Form - {os.path.basename(self.pdf_path)}")
+        self.dialog.geometry("1200x800")
+        self.dialog.configure(bg='#f0f0f0')
+        
+        # Make dialog modal
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
         
-        # Center the dialog
-        self.dialog.geometry("+%d+%d" % (
-            self.parent.winfo_rootx() + 100, 
-            self.parent.winfo_rooty() + 50
-        ))
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (1200 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (800 // 2)
+        self.dialog.geometry(f"1200x800+{x}+{y}")
         
         # Create main layout
-        self._create_dialog_layout()
+        self._create_enhanced_layout()
         
-        # Populate with form fields
-        self._populate_form_fields()
+        # Render PDF pages and overlay input fields
+        self._render_pdf_backdrop()
+        
+        # Show dialog
+        self.dialog.wait_window()
     
-    def _create_dialog_layout(self):
-        """Create the dialog layout structure"""
-        # Header
-        header_frame = tk.Frame(self.dialog, bg='#2196F3', height=60)
-        header_frame.pack(fill='x')
-        header_frame.pack_propagate(False)
+    def _create_enhanced_layout(self):
+        """Create the enhanced layout with PDF backdrop capability"""
+        # Top toolbar
+        toolbar = tk.Frame(self.dialog, bg='#2196F3', height=50)
+        toolbar.pack(fill='x')
+        toolbar.pack_propagate(False)
         
-        header_label = tk.Label(
-            header_frame,
-            text="📝 PDF Form Input",
+        # Title and info
+        tk.Label(
+            toolbar,
+            text=f"� {os.path.basename(self.pdf_path)}",
             bg='#2196F3',
             fg='white',
-            font=('Arial', 16, 'bold')
-        )
-        header_label.pack(side='left', padx=20, pady=15)
+            font=('Arial', 14, 'bold')
+        ).pack(side='left', padx=20, pady=15)
         
-        # Form info
-        info_label = tk.Label(
-            header_frame,
-            text=f"📄 {os.path.basename(self.pdf_path)} • {len(self.form_fields)} fields",
+        tk.Label(
+            toolbar,
+            text=f"� {len(self.form_fields)} fields to fill",
             bg='#2196F3',
             fg='white',
             font=('Arial', 10)
+        ).pack(side='right', padx=20, pady=15)
+        
+        # Main content area with PDF backdrop
+        content_frame = tk.Frame(self.dialog, bg='#e0e0e0')
+        content_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # PDF display canvas with scrollbars
+        canvas_frame = tk.Frame(content_frame, bg='#e0e0e0')
+        canvas_frame.pack(fill='both', expand=True)
+        
+        # Create scrollable PDF canvas
+        self.pdf_canvas = tk.Canvas(
+            canvas_frame, 
+            bg='white',
+            highlightthickness=1,
+            highlightbackground='#cccccc'
         )
-        info_label.pack(side='right', padx=20, pady=15)
         
-        # Scrollable content area
-        main_frame = tk.Frame(self.dialog, bg='#f5f5f5')
-        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        # Scrollbars for PDF navigation
+        v_scrollbar = tk.Scrollbar(canvas_frame, orient='vertical', command=self.pdf_canvas.yview)
+        h_scrollbar = tk.Scrollbar(canvas_frame, orient='horizontal', command=self.pdf_canvas.xview)
         
-        # Create scrollable frame
-        self.canvas = tk.Canvas(main_frame, bg='#f5f5f5', highlightthickness=0)
-        scrollbar = tk.Scrollbar(main_frame, orient='vertical', command=self.canvas.yview)
-        self.scrollable_frame = tk.Frame(self.canvas, bg='#f5f5f5')
-        
-        # Configure scrolling
-        self.scrollable_frame.bind(
-            '<Configure>',
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+        self.pdf_canvas.configure(
+            yscrollcommand=v_scrollbar.set,
+            xscrollcommand=h_scrollbar.set
         )
         
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor='nw')
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Pack scrollable components
-        self.canvas.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
+        # Pack canvas and scrollbars
+        self.pdf_canvas.pack(side='left', fill='both', expand=True)
+        v_scrollbar.pack(side='right', fill='y')
+        h_scrollbar.pack(side='bottom', fill='x')
         
         # Mouse wheel scrolling
         def _on_mousewheel(event):
-            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            self.pdf_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.pdf_canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
         # Button frame
         button_frame = tk.Frame(self.dialog, bg='#f0f0f0', height=70)
@@ -266,31 +285,340 @@ class PDFFormInputter:
             font=('Arial', 10),
             height=2
         ).pack(side='left', padx=5, pady=15)
+        
+        # Zoom controls
+        zoom_frame = tk.Frame(button_frame, bg='#f0f0f0')
+        zoom_frame.pack(side='left', padx=20)
+        
+        tk.Button(
+            zoom_frame,
+            text="🔍+",
+            command=self._zoom_in,
+            bg='#607D8B',
+            fg='white',
+            font=('Arial', 10),
+            width=3
+        ).pack(side='left', padx=2)
+        
+        tk.Button(
+            zoom_frame,
+            text="🔍-",
+            command=self._zoom_out,
+            bg='#607D8B',
+            fg='white',
+            font=('Arial', 10),
+            width=3
+        ).pack(side='left', padx=2)
+        
+        tk.Button(
+            zoom_frame,
+            text="📐 Fit",
+            command=self._zoom_fit,
+            bg='#607D8B',
+            fg='white',
+            font=('Arial', 10),
+            width=4
+        ).pack(side='left', padx=2)
     
-    def _populate_form_fields(self):
-        """Populate the form with input fields"""
-        if not self.form_fields:
-            no_fields_label = tk.Label(
-                self.scrollable_frame,
-                text="📭 No form fields found in this PDF",
-                font=('Arial', 14),
-                fg='#666666',
-                bg='#f5f5f5'
-            )
-            no_fields_label.pack(pady=50)
+    def _render_pdf_backdrop(self):
+        """Render PDF pages as backdrop and overlay input fields"""
+        if not self.pdf_doc or not self.form_fields:
             return
         
-        # Group fields by page
-        fields_by_page = {}
-        for field in self.form_fields:
-            page_num = field['page']
-            if page_num not in fields_by_page:
-                fields_by_page[page_num] = []
-            fields_by_page[page_num].append(field)
+        # Calculate initial scale to fit page width
+        self._calculate_initial_scale()
         
-        # Create input widgets for each page
-        for page_num in sorted(fields_by_page.keys()):
-            self._create_page_section(page_num, fields_by_page[page_num])
+        # Render all pages with overlaid input fields
+        total_height = 0
+        page_spacing = 20  # Space between pages
+        
+        for page_num in range(len(self.pdf_doc)):
+            page_y_offset = total_height
+            
+            # Render PDF page as background image
+            page_image = self._render_pdf_page(page_num)
+            if page_image:
+                # Add page image to canvas
+                canvas_image = self.pdf_canvas.create_image(
+                    10, page_y_offset + 10, 
+                    anchor='nw', 
+                    image=page_image,
+                    tags=f"page_{page_num}"
+                )
+                
+                # Store reference to prevent garbage collection
+                if not hasattr(self, 'page_images'):
+                    self.page_images = {}
+                self.page_images[page_num] = page_image
+                
+                # Update total height
+                page_height = page_image.height()
+                total_height += page_height + page_spacing
+                
+                # Overlay input fields for this page
+                self._overlay_page_fields(page_num, 10, page_y_offset + 10)
+        
+        # Configure canvas scroll region
+        self.pdf_canvas.configure(scrollregion=(0, 0, 0, total_height))
+    
+    def _calculate_initial_scale(self):
+        """Calculate initial scale factor to fit PDF in canvas"""
+        if not self.pdf_doc:
+            return
+        
+        # Get first page dimensions
+        page = self.pdf_doc[0]
+        page_rect = page.rect
+        
+        # Get available canvas width (accounting for scrollbar)
+        canvas_width = 1150  # Approximate available width
+        
+        # Calculate scale to fit width with some padding
+        self.scale_factor = min(1.0, (canvas_width - 40) / page_rect.width)
+    
+    def _render_pdf_page(self, page_num: int):
+        """Render a PDF page as a Tkinter-compatible image"""
+        try:
+            page = self.pdf_doc[page_num]
+            
+            # Create pixmap with scale factor
+            mat = fitz.Matrix(self.scale_factor, self.scale_factor)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # Convert to PIL Image
+            img_data = pix.tobytes("ppm")
+            pil_image = Image.open(io.BytesIO(img_data))
+            
+            # Convert to Tkinter PhotoImage
+            tk_image = ImageTk.PhotoImage(pil_image)
+            
+            return tk_image
+            
+        except Exception as e:
+            print(f"Error rendering PDF page {page_num}: {e}")
+            return None
+    
+    def _overlay_page_fields(self, page_num: int, canvas_x_offset: int, canvas_y_offset: int):
+        """Overlay input fields on the PDF page"""
+        page_fields = [f for f in self.form_fields if f['page'] == page_num]
+        
+        for field in page_fields:
+            # Calculate field position on canvas
+            field_rect = field['rect']
+            
+            # Scale and position the field
+            scaled_x = field_rect.x0 * self.scale_factor + canvas_x_offset
+            scaled_y = field_rect.y0 * self.scale_factor + canvas_y_offset
+            scaled_width = (field_rect.x1 - field_rect.x0) * self.scale_factor
+            scaled_height = (field_rect.y1 - field_rect.y0) * self.scale_factor
+            
+            # Create overlay input widget
+            self._create_overlay_field_widget(field, scaled_x, scaled_y, scaled_width, scaled_height)
+    
+    def _create_overlay_field_widget(self, field: Dict, x: float, y: float, width: float, height: float):
+        """Create an input widget overlaid on the PDF at the exact field position"""
+        field_name = field['name']
+        field_type = field['type']
+        
+        # Create appropriate widget type based on field
+        if field_type == 'TEXT':
+            widget = tk.Entry(
+                self.pdf_canvas,
+                font=('Arial', 10),
+                relief='solid',
+                bd=1,
+                bg='#ffffff'
+            )
+            widget.insert(0, field.get('value', ''))
+            
+        elif field_type == 'CHECKBOX':
+            var = tk.BooleanVar()
+            widget = tk.Checkbutton(
+                self.pdf_canvas,
+                variable=var,
+                bg='white',
+                activebackground='#e3f2fd'
+            )
+            if field.get('value'):
+                var.set(True)
+            # Store variable reference
+            self.field_widgets[f"{field_name}_var"] = var
+            
+        elif field_type == 'IMAGE':
+            # Create image field with preview
+            widget = self._create_image_field_overlay(field, width, height)
+            
+        elif field_type == 'DATE':
+            widget = tk.Entry(
+                self.pdf_canvas,
+                font=('Arial', 10),
+                relief='solid',
+                bd=1,
+                bg='#e3f2fd'
+            )
+            widget.insert(0, field.get('value', ''))
+            
+        elif field_type == 'DROPDOWN':
+            widget = ttk.Combobox(
+                self.pdf_canvas,
+                values=field.get('options', []),
+                state='readonly',
+                font=('Arial', 10)
+            )
+            if field.get('value'):
+                widget.set(field['value'])
+                
+        else:
+            # Default to text entry
+            widget = tk.Entry(
+                self.pdf_canvas,
+                font=('Arial', 10),
+                relief='solid',
+                bd=1
+            )
+            widget.insert(0, field.get('value', ''))
+        
+        # Position widget on canvas
+        widget_id = self.pdf_canvas.create_window(
+            x, y,
+            anchor='nw',
+            window=widget,
+            width=max(width, 100),  # Minimum width
+            height=max(height, 25), # Minimum height
+            tags=f"field_{field_name}"
+        )
+        
+        # Store widget reference
+        self.field_widgets[field_name] = widget
+        
+        # Add hover effect to show field info
+        def on_enter(event):
+            widget.configure(highlightbackground='#2196F3', highlightthickness=2)
+        
+        def on_leave(event):
+            widget.configure(highlightthickness=0)
+        
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+    
+    def _create_image_field_overlay(self, field: Dict, width: float, height: float):
+        """Create an image field overlay with preview capability"""
+        # Create a frame to hold image controls
+        image_frame = tk.Frame(self.pdf_canvas, bg='white', relief='solid', bd=2)
+        
+        # Image preview area
+        self.image_preview = tk.Label(
+            image_frame,
+            text="📷 Click to select image",
+            bg='#f5f5f5',
+            fg='#666666',
+            font=('Arial', 9),
+            relief='sunken',
+            bd=1,
+            cursor='hand2'
+        )
+        self.image_preview.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        # Store field reference for this image widget
+        field_name = field['name']
+        
+        def select_image():
+            file_path = filedialog.askopenfilename(
+                title=f"Select Image for {field_name}",
+                filetypes=[
+                    ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.tiff"),
+                    ("PNG files", "*.png"),
+                    ("JPEG files", "*.jpg *.jpeg"),
+                    ("All files", "*.*")
+                ]
+            )
+            
+            if file_path:
+                # Store the image path
+                self.field_values[field_name] = file_path
+                
+                # Update preview
+                self._update_image_preview(self.image_preview, file_path, width, height)
+        
+        # Bind click event
+        self.image_preview.bind("<Button-1>", lambda e: select_image())
+        
+        return image_frame
+    
+    def _update_image_preview(self, preview_label, image_path: str, max_width: float, max_height: float):
+        """Update the image preview with the selected image"""
+        try:
+            # Open and resize image for preview
+            pil_image = Image.open(image_path)
+            
+            # Calculate preview size (smaller than field size for preview)
+            preview_width = min(max_width - 4, 150)
+            preview_height = min(max_height - 4, 100)
+            
+            # Maintain aspect ratio
+            aspect_ratio = pil_image.width / pil_image.height
+            if preview_width / preview_height > aspect_ratio:
+                preview_width = int(preview_height * aspect_ratio)
+            else:
+                preview_height = int(preview_width / aspect_ratio)
+            
+            # Resize image
+            pil_image = pil_image.resize((int(preview_width), int(preview_height)), Image.Resampling.LANCZOS)
+            
+            # Convert to Tkinter image
+            tk_image = ImageTk.PhotoImage(pil_image)
+            
+            # Update label
+            preview_label.configure(
+                image=tk_image,
+                text="",  # Remove text
+                bg='white'
+            )
+            
+            # Store reference to prevent garbage collection
+            preview_label.image = tk_image
+            
+            # Add filename indicator
+            filename = os.path.basename(image_path)
+            if len(filename) > 20:
+                filename = filename[:17] + "..."
+            preview_label.configure(text=f"📷 {filename}", compound='top', fg='#666666', font=('Arial', 8))
+            
+        except Exception as e:
+            print(f"Error updating image preview: {e}")
+            preview_label.configure(
+                text=f"📷 {os.path.basename(image_path)}\n(Preview error)",
+                image="",
+                bg='#ffebee',
+                fg='#d32f2f'
+            )
+    
+    def _zoom_in(self):
+        """Zoom in on the PDF"""
+        self.scale_factor *= 1.2
+        self._refresh_pdf_display()
+    
+    def _zoom_out(self):
+        """Zoom out on the PDF"""
+        self.scale_factor /= 1.2
+        self._refresh_pdf_display()
+    
+    def _zoom_fit(self):
+        """Fit PDF to canvas width"""
+        self._calculate_initial_scale()
+        self._refresh_pdf_display()
+    
+    def _refresh_pdf_display(self):
+        """Refresh the PDF display after zoom changes"""
+        # Clear canvas
+        self.pdf_canvas.delete("all")
+        
+        # Clear stored references
+        if hasattr(self, 'page_images'):
+            self.page_images.clear()
+        
+        # Re-render with new scale
+        self._render_pdf_backdrop()
     
     def _create_page_section(self, page_num: int, fields: List[Dict]):
         """Create a section for fields on a specific page"""
@@ -648,13 +976,29 @@ class PDFFormInputter:
         )
         
         if result:
-            for field_name, widget in self.field_values.items():
-                if isinstance(widget, tk.StringVar):
+            # Clear overlay widget values
+            for field_name, widget in self.field_widgets.items():
+                if field_name.endswith('_var'):
+                    # Boolean variable for checkbox
+                    if isinstance(widget, tk.BooleanVar):
+                        widget.set(False)
+                elif isinstance(widget, tk.Entry):
+                    widget.delete(0, tk.END)
+                elif isinstance(widget, ttk.Combobox):
                     widget.set('')
-                elif isinstance(widget, tk.BooleanVar):
-                    widget.set(False)
-                elif isinstance(widget, tk.Listbox):
-                    widget.selection_clear(0, tk.END)
+                elif isinstance(widget, tk.Frame):
+                    # Image field frame - reset preview
+                    for child in widget.winfo_children():
+                        if isinstance(child, tk.Label):
+                            child.configure(
+                                image="",
+                                text="📷 Click to select image",
+                                bg='#f5f5f5',
+                                fg='#666666'
+                            )
+            
+            # Clear stored values
+            self.field_values.clear()
     
     def _save_completed_form(self):
         """Save the completed PDF form"""
@@ -695,28 +1039,25 @@ class PDFFormInputter:
                 field_name = field['name']
                 field_type = field['type']
                 
-                # Get user input value
-                if field_name in self.field_values:
-                    widget = self.field_values[field_name]
+                # Get user input value from overlay widgets
+                value = None
+                
+                if field_name in self.field_widgets:
+                    widget = self.field_widgets[field_name]
                     
                     try:
-                        value = None
-                        
-                        if isinstance(widget, tk.StringVar):
+                        if field_type == 'TEXT' or field_type == 'DATE':
                             value = widget.get()
-                        elif isinstance(widget, tk.BooleanVar):
-                            value = "Yes" if widget.get() else "No"
-                        elif isinstance(widget, tk.Listbox):
-                            selection = widget.curselection()
-                            if selection:
-                                value = widget.get(selection[0])
-                        
-                        # Handle special field types
-                        if field_type == 'IMAGE':
-                            # Check if image path was selected
-                            image_path_key = field_name + '_path'
-                            if image_path_key in self.field_values:
-                                image_path = self.field_values[image_path_key]
+                        elif field_type == 'CHECKBOX':
+                            var = self.field_widgets.get(f"{field_name}_var")
+                            if var:
+                                value = "Yes" if var.get() else "No"
+                        elif field_type == 'DROPDOWN':
+                            value = widget.get()
+                        elif field_type == 'IMAGE':
+                            # Handle image field specially
+                            if field_name in self.field_values:
+                                image_path = self.field_values[field_name]
                                 if image_path and os.path.exists(image_path):
                                     # Embed image in the field area
                                     page = output_doc[field['page']]
@@ -734,7 +1075,7 @@ class PDFFormInputter:
                                     filled_count += 1
                                     continue  # Skip the normal widget update for IMAGE fields
                         
-                        # Update field value in PDF (for non-IMAGE fields or IMAGE fields without images)
+                        # Update field value in PDF (for non-IMAGE fields)
                         if value is not None and value.strip():
                             # Find and update the widget
                             page = output_doc[field['page']]
