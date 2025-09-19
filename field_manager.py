@@ -218,6 +218,15 @@ class FieldManager:
     
     def draw_field(self, field: FormField):
         """Draw a field on the canvas"""
+        # First, remove any existing canvas elements for this field
+        self.canvas.delete(f"field_{field.name}")
+        self.canvas.delete(f"field_{field.name}_label")
+        
+        # Also remove resize handles if this field is selected
+        if field == self.selected_field:
+            for handle in AppConstants.RESIZE_HANDLES:
+                self.canvas.delete(f"handle_{handle}")
+        
         # Use canvas coordinates for drawing
         canvas_rect = self.get_canvas_rect_for_field(field)
         x1, y1, x2, y2 = canvas_rect

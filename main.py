@@ -26,6 +26,7 @@ from models import FieldType, AppConstants, MouseState
 from pdf_handler import PDFHandler
 from field_manager import FieldManager
 from ui_components import ToolbarFrame, NavigationFrame, StatusBar, ScrollableCanvas, FieldsSidebar
+from history_manager import HistoryManager, CreateFieldCommand, DeleteFieldCommand, MoveFieldCommand, EditFieldCommand
 
 
 class PdfFormMakerApp:
@@ -50,6 +51,7 @@ class PdfFormMakerApp:
         # Create core handlers
         self.pdf_handler = PDFHandler(self.canvas_frame.canvas)
         self.field_manager = FieldManager(self.canvas_frame.canvas, self.pdf_handler)
+        self.history_manager = HistoryManager(max_history=25)
         
         # Bind events
         self._bind_events()
@@ -114,6 +116,7 @@ class PdfFormMakerApp:
         self.root.bind('<Control-c>', lambda e: self.copy_field())
         self.root.bind('<Control-v>', lambda e: self.paste_field())
         self.root.bind('<Control-d>', lambda e: self.duplicate_field())
+        self.root.bind('<Control-z>', lambda e: self.undo_last_action())
         self.root.bind('<Escape>', lambda e: self.clear_selection())
         
         # Arrow key handling for field movement (bind to root to ensure capture)
@@ -250,11 +253,20 @@ class PdfFormMakerApp:
         elif direction == 'Down':
             dy = current_step
         
-        # Move the field
-        self.field_manager.move_field(
-            self.field_manager.selected_field,
-            dx, dy
-        )
+        # Store original position for undo
+        field = self.field_manager.selected_field
+        original_rect = field.rect.copy()
+        
+        # Create move command for history
+        new_rect = field.rect.copy()
+        new_rect[0] += dx  # x1
+        new_rect[1] += dy  # y1
+        new_rect[2] += dx  # x2
+        new_rect[3] += dy  # y2
+        move_command = MoveFieldCommand(self.field_manager, field, original_rect, new_rect)
+        
+        # Execute the move command through history manager
+        self.history_manager.execute_command(move_command)
         
         # Update sidebar if the field was moved
         self._update_sidebar()
@@ -288,6 +300,10 @@ class PdfFormMakerApp:
             # Select the field
             self.field_manager.select_field(clicked_field)
             self.sidebar.select_field(clicked_field)  # Update sidebar selection
+            
+            # Store original field position for undo
+            self.original_field_rect = clicked_field.rect.copy()
+            
             self.mouse_state.start_drag(x, y)
             self.status_bar.set_status(f"Selected {clicked_field.type.value} field - Drag to move, use arrow keys or handles to resize, or press Delete to remove")
             
@@ -296,6 +312,11 @@ class PdfFormMakerApp:
             field = self.field_manager.create_field(
                 self.current_tool, x, y, self.pdf_handler.current_page
             )
+            
+            # Create history command for field creation (already executed)
+            create_command = CreateFieldCommand(self.field_manager, field)
+            create_command.was_executed = True  # Mark as executed since field was already created
+            self.history_manager.add_command(create_command)
             
             # Draw and select the new field
             self.field_manager.draw_field(field)
@@ -345,6 +366,25 @@ class PdfFormMakerApp:
     
     def on_canvas_release(self, event):
         """Handle canvas mouse release events"""
+        # If we were dragging a field, create a move command for history
+        if (self.mouse_state.dragging and self.field_manager.selected_field and 
+            hasattr(self, 'original_field_rect') and self.original_field_rect):
+            
+            current_rect = self.field_manager.selected_field.rect
+            
+            # Only create move command if position actually changed
+            if current_rect != self.original_field_rect:
+                move_command = MoveFieldCommand(
+                    self.field_manager, 
+                    self.field_manager.selected_field,
+                    self.original_field_rect,
+                    current_rect.copy()
+                )
+                # Add to history without executing since field was already moved during drag
+                self.history_manager.add_command(move_command)
+            
+            self.original_field_rect = None
+        
         self.mouse_state.reset()
     
     def on_canvas_motion(self, event):
@@ -386,7 +426,10 @@ class PdfFormMakerApp:
         )
         
         if result:
-            self.field_manager.delete_field(field)
+            # Create delete command and execute it
+            delete_command = DeleteFieldCommand(self.field_manager, field)
+            self.history_manager.execute_command(delete_command)
+            
             self.status_bar.set_status(f"Deleted {field.type.value} field")
             # Update sidebar after deletion
             self._update_sidebar()
@@ -465,6 +508,22 @@ class PdfFormMakerApp:
         
         # Restore the original clipboard
         self.clipboard_field = original_clipboard
+    
+    def undo_last_action(self):
+        """Undo the last action using the history manager"""
+        try:
+            if self.history_manager.undo():
+                description = self.history_manager.get_undo_description()
+                self.status_bar.set_status(f"Undone: {description}" if description else "Undone last action")
+                
+                # Refresh UI
+                self._update_sidebar()
+                self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+            else:
+                self.status_bar.set_status("Nothing to undo")
+        except Exception as e:
+            print(f"Error during undo: {e}")
+            self.status_bar.set_status("Error during undo operation")
     
     def previous_page(self):
         """Go to previous page"""
@@ -550,9 +609,12 @@ class PdfFormMakerApp:
     
     def on_sidebar_field_delete(self, field):
         """Handle field deletion from sidebar"""
-        if self.field_manager.delete_field(field):
-            self._update_sidebar()
-            self.status_bar.set_status(f"Deleted {field.type.value} field '{field.name}'")
+        # Create delete command and execute it
+        delete_command = DeleteFieldCommand(self.field_manager, field)
+        self.history_manager.execute_command(delete_command)
+        
+        self._update_sidebar()
+        self.status_bar.set_status(f"Deleted {field.type.value} field '{field.name}'")
     
     def on_sidebar_field_edit(self, field):
         """Handle field editing from sidebar"""
