@@ -288,7 +288,8 @@ class ScrollableCanvas(tk.Frame):
         self.canvas = tk.Canvas(
             self,
             bg='white',
-            scrollregion=(0, 0, 800, 1000)
+            scrollregion=(0, 0, 800, 1000),
+            takefocus=True  # Allow canvas to receive keyboard focus
         )
         
         # Create scrollbars
@@ -314,6 +315,9 @@ class ScrollableCanvas(tk.Frame):
         
         # Allow canvas to receive focus for keyboard events
         self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set())
+        
+        # Set initial focus on canvas
+        self.canvas.focus_set()
         
         # Pack scrollbars and canvas
         self.v_scrollbar.pack(side='right', fill='y')

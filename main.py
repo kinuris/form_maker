@@ -115,13 +115,20 @@ class PdfFormMakerApp:
         self.root.bind('<Control-d>', lambda e: self.duplicate_field())
         self.root.bind('<Escape>', lambda e: self.clear_selection())
         
-        # Arrow key panning (bind to canvas for focus)
-        self.canvas_frame.canvas.bind('<Left>', self.canvas_frame.handle_keyboard_pan)
-        self.canvas_frame.canvas.bind('<Right>', self.canvas_frame.handle_keyboard_pan)
-        self.canvas_frame.canvas.bind('<Up>', self.canvas_frame.handle_keyboard_pan)
-        self.canvas_frame.canvas.bind('<Down>', self.canvas_frame.handle_keyboard_pan)
+        # Arrow key handling for field movement (bind to root to ensure capture)
+        self.root.bind('<Left>', self.handle_arrow_key)
+        self.root.bind('<Right>', self.handle_arrow_key)
+        self.root.bind('<Up>', self.handle_arrow_key)
+        self.root.bind('<Down>', self.handle_arrow_key)
         
-        self.root.focus_set()
+        # Arrow keys with Shift modifier for larger movements
+        self.root.bind('<Shift-Left>', self.handle_arrow_key)
+        self.root.bind('<Shift-Right>', self.handle_arrow_key)
+        self.root.bind('<Shift-Up>', self.handle_arrow_key)
+        self.root.bind('<Shift-Down>', self.handle_arrow_key)
+        
+        # Set focus on canvas for keyboard events
+        self.canvas_frame.canvas.focus_set()
         
         # Canvas mouse events
         self.canvas_frame.bind_events(
@@ -187,6 +194,75 @@ class PdfFormMakerApp:
         self.toolbar.clear_tool_selection()
         self.status_bar.set_status("Selection cleared")
     
+    def handle_arrow_key(self, event):
+        """Handle arrow key events for field movement or canvas panning"""
+        print(f"DEBUG: Arrow key pressed - {event.keysym}")  # Debug print
+        
+        # Check if canvas has focus (or any of its children)
+        focused_widget = self.root.focus_get()
+        canvas_has_focus = (focused_widget == self.canvas_frame.canvas or 
+                           (focused_widget and str(focused_widget).startswith(str(self.canvas_frame.canvas))))
+        
+        if not canvas_has_focus:
+            print(f"DEBUG: Canvas doesn't have focus (focused: {focused_widget}), ignoring arrow key")
+            return
+        
+        print(f"DEBUG: Canvas has focus, processing arrow key")
+        
+        # Check if a field is selected
+        if self.field_manager.selected_field:
+            print(f"DEBUG: Moving selected field: {self.field_manager.selected_field.name}")  # Debug print
+            # Move the selected field
+            self.move_selected_field_with_arrow(event)
+        else:
+            print("DEBUG: No field selected, falling back to canvas panning")  # Debug print
+            # Fall back to canvas panning
+            self.canvas_frame.handle_keyboard_pan(event)
+    
+    def move_selected_field_with_arrow(self, event):
+        """Move the selected field using arrow keys"""
+        print(f"DEBUG: move_selected_field_with_arrow called with {event.keysym}")  # Debug print
+        
+        if not self.field_manager.selected_field:
+            print("DEBUG: No selected field in move method")  # Debug print
+            return
+        
+        # Define movement step size (in canvas pixels)
+        step_size = 2  # pixels (reduced to 1/3 of original 5px)
+        large_step_size = 7  # pixels for Shift+Arrow (reduced to 1/3 of original 20px)
+        
+        # Check if Shift modifier is pressed
+        shift_pressed = event.state & 0x1  # Shift key state flag
+        
+        # Use larger step if Shift is pressed
+        current_step = large_step_size if shift_pressed else step_size
+        
+        # Calculate movement delta based on direction
+        dx, dy = 0, 0
+        direction = event.keysym
+        if direction == 'Left':
+            dx = -current_step
+        elif direction == 'Right':
+            dx = current_step
+        elif direction == 'Up':
+            dy = -current_step
+        elif direction == 'Down':
+            dy = current_step
+        
+        # Move the field
+        self.field_manager.move_field(
+            self.field_manager.selected_field,
+            dx, dy
+        )
+        
+        # Update sidebar if the field was moved
+        self._update_sidebar()
+        
+        # Update status
+        field_name = self.field_manager.selected_field.name
+        modifier_text = " (large step)" if shift_pressed else ""
+        self.status_bar.set_status(f"Moved field '{field_name}' {direction.lower()}{modifier_text}")
+    
     def on_canvas_click(self, event):
         """Handle canvas click events"""
         if not self.pdf_handler.pdf_doc:
@@ -212,7 +288,7 @@ class PdfFormMakerApp:
             self.field_manager.select_field(clicked_field)
             self.sidebar.select_field(clicked_field)  # Update sidebar selection
             self.mouse_state.start_drag(x, y)
-            self.status_bar.set_status(f"Selected {clicked_field.type.value} field - Drag to move, use handles to resize, or press Delete to remove")
+            self.status_bar.set_status(f"Selected {clicked_field.type.value} field - Drag to move, use arrow keys or handles to resize, or press Delete to remove")
             
         elif self.current_tool:
             # Create new field at click position
@@ -230,7 +306,7 @@ class PdfFormMakerApp:
             # Clear tool selection
             self.current_tool = None
             self.toolbar.clear_tool_selection()
-            self.status_bar.set_status(f"Created {field.type.value} field - Use mouse to move/resize or Delete key to remove")
+            self.status_bar.set_status(f"Created {field.type.value} field - Use mouse to move/resize, arrow keys to fine-tune position, or Delete key to remove")
             
         else:
             # Clear selection if clicking on empty space
