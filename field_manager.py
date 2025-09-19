@@ -132,26 +132,39 @@ class FieldManager:
     
     def select_field(self, field: Optional[FormField]):
         """Select a field and update visual representation"""
+        # If selecting the same field, do nothing
+        if self.selected_field == field:
+            return
+            
+        # Clear any existing selection first
         if self.selected_field:
             self.clear_selection()
         
+        # Select the new field
         self.selected_field = field
         if field:
-            self.draw_field(field)  # Redraw with selection highlighting
+            # Redraw the field with selection highlighting
+            self.canvas.delete(f"field_{field.name}")
+            self.canvas.delete(f"field_{field.name}_label")
+            self.draw_field(field)
     
     def clear_selection(self):
         """Clear the currently selected field"""
         if self.selected_field:
+            # Store reference to previously selected field
+            previously_selected = self.selected_field
+            
+            # Clear the selection first
+            self.selected_field = None
+            
             # Remove resize handles
             for handle in AppConstants.RESIZE_HANDLES:
                 self.canvas.delete(f"handle_{handle}")
             
             # Redraw field without selection highlighting
-            self.canvas.delete(f"field_{self.selected_field.name}")
-            self.canvas.delete(f"field_{self.selected_field.name}_label")
-            self.draw_field(self.selected_field)
-        
-        self.selected_field = None
+            self.canvas.delete(f"field_{previously_selected.name}")
+            self.canvas.delete(f"field_{previously_selected.name}_label")
+            self.draw_field(previously_selected)
     
     def delete_field(self, field: FormField) -> bool:
         """
@@ -386,3 +399,38 @@ class FieldManager:
         self.fields.clear()
         self.selected_field = None
         self.field_counter = 0
+    
+    def load_existing_fields(self, detected_fields: List[FormField]):
+        """
+        Load existing fields detected from PDF
+        
+        Args:
+            detected_fields: List of FormField objects detected from PDF
+        """
+        # Clear current fields first
+        self.clear_all_fields()
+        
+        # Add each detected field
+        for field in detected_fields:
+            # Ensure field has proper canvas coordinates
+            # The PDF coordinates are already stored in field.rect
+            
+            # Add to fields list
+            self.fields.append(field)
+            
+            # Update field counter to avoid name conflicts
+            # Extract number from field name if present
+            import re
+            match = re.search(r'(\d+)$', field.name)
+            if match:
+                field_num = int(match.group(1))
+                self.field_counter = max(self.field_counter, field_num)
+        
+        # Increment counter for next new field
+        self.field_counter += 1
+        
+        # Draw all fields for current page
+        if self.pdf_handler and hasattr(self.pdf_handler, 'current_page'):
+            self.redraw_fields_for_page(self.pdf_handler.current_page)
+        
+        print(f"Loaded {len(detected_fields)} existing fields from PDF")

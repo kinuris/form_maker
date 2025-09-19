@@ -65,6 +65,132 @@ class PDFHandler:
             print(f"Failed to load PDF: {e}")
             return False
     
+    def detect_existing_fields(self) -> List['FormField']:
+        """
+        Detect and extract existing form fields from the loaded PDF
+        
+        Returns:
+            List of FormField objects representing existing fields in the PDF
+        """
+        if not self.pdf_doc:
+            return []
+        
+        from models import FormField, FieldType
+        detected_fields = []
+        
+        try:
+            # Iterate through all pages
+            for page_num in range(len(self.pdf_doc)):
+                page = self.pdf_doc[page_num]
+                
+                # Get all form widgets on this page
+                widgets = page.widgets()
+                
+                for widget in widgets:
+                    try:
+                        # Extract widget properties
+                        field_type = self._map_pdf_field_type(widget.field_type)
+                        if field_type is None:
+                            continue  # Skip unsupported field types
+                        
+                        # Get field rectangle in PDF coordinates
+                        rect = widget.rect
+                        pdf_rect = [rect.x0, rect.y0, rect.x1, rect.y1]
+                        
+                        # Create FormField object
+                        field = FormField(
+                            name=widget.field_name or f"field_{len(detected_fields) + 1}",
+                            type=field_type,
+                            page_num=page_num,
+                            rect=pdf_rect.copy(),  # Store PDF coordinates
+                            value=widget.field_value or ""
+                        )
+                        
+                        # Add type-specific properties
+                        if field_type == FieldType.DATETIME:
+                            # Try to detect date format from field name or value
+                            field.date_format = self._detect_date_format(widget.field_name, widget.field_value)
+                        
+                        detected_fields.append(field)
+                        print(f"Detected {field_type.value} field: '{field.name}' on page {page_num + 1}")
+                        
+                    except Exception as e:
+                        print(f"Error processing widget: {e}")
+                        continue
+                        
+        except Exception as e:
+            print(f"Error detecting fields: {e}")
+        
+        print(f"Total detected fields: {len(detected_fields)}")
+        return detected_fields
+    
+    def _map_pdf_field_type(self, pdf_field_type: int) -> Optional['FieldType']:
+        """
+        Map PDF field type to our FieldType enum
+        
+        Args:
+            pdf_field_type: PyMuPDF field type constant
+            
+        Returns:
+            Corresponding FieldType or None if unsupported
+        """
+        import fitz
+        from models import FieldType
+        
+        type_mapping = {
+            fitz.PDF_WIDGET_TYPE_TEXT: FieldType.TEXT,
+            fitz.PDF_WIDGET_TYPE_CHECKBOX: FieldType.CHECKBOX,
+            fitz.PDF_WIDGET_TYPE_SIGNATURE: FieldType.SIGNATURE,
+            # Map combobox to datetime for now, could be enhanced with detection logic
+            fitz.PDF_WIDGET_TYPE_COMBOBOX: FieldType.DATETIME,
+        }
+        
+        return type_mapping.get(pdf_field_type)
+    
+    def _detect_date_format(self, field_name: str, field_value: str) -> str:
+        """
+        Try to detect date format from field name or value
+        
+        Args:
+            field_name: Name of the field
+            field_value: Current field value
+            
+        Returns:
+            Detected date format or default format
+        """
+        # Default format
+        default_format = "MM/DD/YYYY"
+        
+        if not field_name and not field_value:
+            return default_format
+        
+        # Check field name for format hints
+        name_lower = (field_name or "").lower()
+        if "date" in name_lower or "birth" in name_lower or "expire" in name_lower:
+            # Try to detect format from common patterns
+            if "dd/mm" in name_lower or "european" in name_lower:
+                return "DD/MM/YYYY"
+            elif "yyyy-mm-dd" in name_lower or "iso" in name_lower:
+                return "YYYY-MM-DD"
+            elif "mmm" in name_lower:
+                return "DD MMM YYYY"
+        
+        # Try to detect from field value pattern
+        if field_value:
+            value = str(field_value).strip()
+            if len(value) >= 8:
+                # Look for common separators and patterns
+                if "/" in value and value.count("/") == 2:
+                    parts = value.split("/")
+                    if len(parts[0]) == 2 and len(parts[1]) == 2 and len(parts[2]) == 4:
+                        return "MM/DD/YYYY"  # or DD/MM/YYYY - ambiguous
+                elif "-" in value and value.count("-") == 2:
+                    parts = value.split("-")
+                    if len(parts[0]) == 4:
+                        return "YYYY-MM-DD"
+        
+        return default_format
+    
     def display_page(self, page_num: int = None) -> bool:
         """
         Display a PDF page on the canvas with zoom support
@@ -188,6 +314,10 @@ class PDFHandler:
             for page_num in range(len(self.pdf_doc)):
                 temp_doc.insert_pdf(self.pdf_doc, from_page=page_num, to_page=page_num)
             
+            # IMPORTANT: Remove all existing form fields first
+            # This ensures that deleted fields are actually removed from the PDF
+            self._remove_all_existing_fields(temp_doc)
+            
             # Add form fields to each page
             for field in fields:
                 page = temp_doc[field.page_num]
@@ -220,6 +350,32 @@ class PDFHandler:
         except Exception as e:
             print(f"Failed to save PDF: {e}")
             return False
+    
+    def _remove_all_existing_fields(self, doc: fitz.Document):
+        """
+        Remove all existing form fields from the PDF document
+        
+        Args:
+            doc: PDF document to remove fields from
+        """
+        try:
+            # Iterate through all pages and remove form fields
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                
+                # Get all widgets on this page
+                widgets = page.widgets()
+                
+                # Remove each widget
+                for widget in widgets:
+                    try:
+                        page.delete_widget(widget)
+                        print(f"Removed existing field: {widget.field_name}")
+                    except Exception as e:
+                        print(f"Warning: Could not remove widget {widget.field_name}: {e}")
+                        
+        except Exception as e:
+            print(f"Warning: Error removing existing fields: {e}")
     
     def _add_widget_to_page(self, page: fitz.Page, field: FormField, rect: fitz.Rect):
         """

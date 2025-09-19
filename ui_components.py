@@ -574,6 +574,12 @@ class FieldsSidebar(tk.Frame):
         self._update_count()
         self._update_action_buttons()
     
+    def refresh_field_list(self):
+        """Public method to refresh the field list (convenience method)"""
+        self._refresh_field_list()
+        self._update_count()
+        self._update_action_buttons()
+    
     def _refresh_field_list(self):
         """Refresh the fields list display"""
         # Clear existing items

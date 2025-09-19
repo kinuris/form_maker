@@ -150,16 +150,25 @@ class PdfFormMakerApp:
         if self.pdf_handler.load_pdf(file_path):
             # Display first page
             if self.pdf_handler.display_page():
-                # Clear existing fields
-                self.field_manager.clear_all_fields()
+                # Detect and load existing form fields
+                existing_fields = self.pdf_handler.detect_existing_fields()
+                self.field_manager.load_existing_fields(existing_fields)
+                
+                # Update sidebar to show loaded fields
+                self._update_sidebar()
                 
                 # Update UI
                 self._update_navigation()
                 self._update_zoom_display()  # Initialize zoom display
                 self.navigation.set_save_enabled(True)
-                self.status_bar.set_status(f"PDF loaded: {self.pdf_handler.total_pages} pages - Use toolbar to add form fields")
                 
-                messagebox.showinfo("Success", f"PDF loaded successfully!\\nPages: {self.pdf_handler.total_pages}")
+                # Update status message based on whether fields were found
+                if existing_fields:
+                    self.status_bar.set_status(f"PDF loaded: {self.pdf_handler.total_pages} pages, {len(existing_fields)} existing fields detected")
+                    messagebox.showinfo("Success", f"PDF loaded successfully!\\nPages: {self.pdf_handler.total_pages}\\nExisting fields detected: {len(existing_fields)}")
+                else:
+                    self.status_bar.set_status(f"PDF loaded: {self.pdf_handler.total_pages} pages - Use toolbar to add form fields")
+                    messagebox.showinfo("Success", f"PDF loaded successfully!\\nPages: {self.pdf_handler.total_pages}\\nNo existing form fields found")
             else:
                 messagebox.showerror("Error", "Failed to display PDF page")
         else:
@@ -303,7 +312,7 @@ class PdfFormMakerApp:
             self.field_manager.delete_field(field)
             self.status_bar.set_status(f"Deleted {field.type.value} field")
             # Update sidebar after deletion
-            self.fields_sidebar.refresh_field_list()
+            self._update_sidebar()
     
     def copy_field(self):
         """Copy the currently selected field to clipboard"""
@@ -325,7 +334,7 @@ class PdfFormMakerApp:
             self.status_bar.set_status("No field in clipboard to paste")
             return
         
-        if not self.pdf_handler.pdf_document:
+        if not self.pdf_handler.pdf_doc:
             self.status_bar.set_status("No PDF loaded")
             return
         
@@ -358,7 +367,7 @@ class PdfFormMakerApp:
         self.field_manager.select_field(new_field)
         
         # Update sidebar
-        self.fields_sidebar.refresh_field_list()
+        self._update_sidebar()
         
         self.status_bar.set_status(f"Pasted {new_field.type.value} field '{new_field.name}'")
     
