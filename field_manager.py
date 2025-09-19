@@ -73,11 +73,9 @@ class FieldManager:
         field.pdf_rect = pdf_rect.copy()
         
         # Add type-specific properties
-        if field_type == FieldType.DROPDOWN:
-            field.options = ['Option 1', 'Option 2', 'Option 3']
-        elif field_type == FieldType.RADIO:
-            field.group = f"radio_group_{self.field_counter}"
-            field.value = f"option_{self.field_counter}"
+        if field_type == FieldType.DATETIME:
+            field.date_format = "MM/DD/YYYY"  # Default format
+            field.value = ""  # Default empty value
         
         # Add to fields list
         self.fields.append(field)
@@ -85,6 +83,15 @@ class FieldManager:
         print(f"Created field '{field.name}' at canvas ({x:.1f}, {y:.1f})")
         
         return field
+    
+    def add_field(self, field: FormField):
+        """Add an existing field to the manager (used for paste operations)"""
+        self.fields.append(field)
+        
+        # Draw the field on the canvas
+        self.draw_field(field)
+        
+        print(f"Added field '{field.name}' to page {field.page_num + 1}")
     
     def get_canvas_rect_for_field(self, field: FormField) -> List[float]:
         """

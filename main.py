@@ -25,7 +25,7 @@ from typing import Optional
 from models import FieldType, AppConstants, MouseState
 from pdf_handler import PDFHandler
 from field_manager import FieldManager
-from ui_components import ToolbarFrame, NavigationFrame, StatusBar, ScrollableCanvas
+from ui_components import ToolbarFrame, NavigationFrame, StatusBar, ScrollableCanvas, FieldsSidebar
 
 
 class PdfFormMakerApp:
@@ -42,6 +42,7 @@ class PdfFormMakerApp:
         # Application state
         self.current_tool: Optional[FieldType] = None
         self.mouse_state = MouseState()
+        self.clipboard_field: Optional['FormField'] = None  # For copy/paste functionality
         
         # Create UI components
         self._create_ui_components()
@@ -69,12 +70,26 @@ class PdfFormMakerApp:
         )
         self.toolbar.pack(fill='x', padx=5, pady=5)
         
+        # Main content area (canvas + sidebar)
+        main_frame = tk.Frame(self.root, bg='#f0f0f0')
+        main_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Fields sidebar
+        self.sidebar = FieldsSidebar(
+            main_frame,
+            on_field_select=self.on_sidebar_field_select,
+            on_field_delete=self.on_sidebar_field_delete,
+            on_field_edit=self.on_sidebar_field_edit,
+            on_field_duplicate=self.on_sidebar_field_duplicate
+        )
+        self.sidebar.pack(side='left', fill='y')
+        
         # Main canvas area with mouse wheel zoom
         self.canvas_frame = ScrollableCanvas(
-            self.root,
+            main_frame,
             on_mouse_wheel_zoom=self.handle_mouse_wheel_zoom
         )
-        self.canvas_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        self.canvas_frame.pack(side='right', fill='both', expand=True, padx=(5, 0))
         
         # Bottom navigation
         self.navigation = NavigationFrame(
@@ -95,6 +110,9 @@ class PdfFormMakerApp:
         self.root.bind('<Key>', self.on_key_press)
         self.root.bind('<Control-o>', lambda e: self.open_pdf())
         self.root.bind('<Control-s>', lambda e: self.save_pdf())
+        self.root.bind('<Control-c>', lambda e: self.copy_field())
+        self.root.bind('<Control-v>', lambda e: self.paste_field())
+        self.root.bind('<Control-d>', lambda e: self.duplicate_field())
         self.root.bind('<Escape>', lambda e: self.clear_selection())
         
         # Arrow key panning (bind to canvas for focus)
@@ -183,6 +201,7 @@ class PdfFormMakerApp:
         if clicked_field:
             # Select the field
             self.field_manager.select_field(clicked_field)
+            self.sidebar.select_field(clicked_field)  # Update sidebar selection
             self.mouse_state.start_drag(x, y)
             self.status_bar.set_status(f"Selected {clicked_field.type.value} field - Drag to move, use handles to resize, or press Delete to remove")
             
@@ -196,6 +215,9 @@ class PdfFormMakerApp:
             self.field_manager.draw_field(field)
             self.field_manager.select_field(field)
             
+            # Update sidebar
+            self._update_sidebar()
+            
             # Clear tool selection
             self.current_tool = None
             self.toolbar.clear_tool_selection()
@@ -204,6 +226,7 @@ class PdfFormMakerApp:
         else:
             # Clear selection if clicking on empty space
             self.field_manager.clear_selection()
+            self.sidebar.select_field(None)  # Clear sidebar selection
     
     def on_canvas_drag(self, event):
         """Handle canvas drag events"""
@@ -279,6 +302,83 @@ class PdfFormMakerApp:
         if result:
             self.field_manager.delete_field(field)
             self.status_bar.set_status(f"Deleted {field.type.value} field")
+            # Update sidebar after deletion
+            self.fields_sidebar.refresh_field_list()
+    
+    def copy_field(self):
+        """Copy the currently selected field to clipboard"""
+        if not self.field_manager.selected_field:
+            self.status_bar.set_status("No field selected to copy")
+            return
+        
+        # Create a copy of the field (deep copy of properties)
+        from copy import deepcopy
+        self.clipboard_field = deepcopy(self.field_manager.selected_field)
+        # Clear the canvas_id as it will be assigned when pasted
+        self.clipboard_field.canvas_id = None
+        
+        self.status_bar.set_status(f"Copied {self.clipboard_field.type.value} field '{self.clipboard_field.name}'")
+    
+    def paste_field(self):
+        """Paste the copied field at the current mouse position or a default location"""
+        if not self.clipboard_field:
+            self.status_bar.set_status("No field in clipboard to paste")
+            return
+        
+        if not self.pdf_handler.pdf_document:
+            self.status_bar.set_status("No PDF loaded")
+            return
+        
+        # Create a copy of the clipboard field for pasting
+        from copy import deepcopy
+        new_field = deepcopy(self.clipboard_field)
+        
+        # Generate a unique name for the pasted field
+        base_name = new_field.name
+        counter = 1
+        while any(field.name == new_field.name for field in self.field_manager.fields):
+            new_field.name = f"{base_name}_copy_{counter}"
+            counter += 1
+        
+        # Set the current page
+        new_field.page_num = self.pdf_handler.current_page
+        
+        # Position the field slightly offset from original or at a default location
+        original_rect = new_field.rect
+        offset = 20.0  # pixels
+        new_field.rect = [
+            original_rect[0] + offset,
+            original_rect[1] + offset,
+            original_rect[2] + offset,
+            original_rect[3] + offset
+        ]
+        
+        # Add the field through the field manager
+        self.field_manager.add_field(new_field)
+        self.field_manager.select_field(new_field)
+        
+        # Update sidebar
+        self.fields_sidebar.refresh_field_list()
+        
+        self.status_bar.set_status(f"Pasted {new_field.type.value} field '{new_field.name}'")
+    
+    def duplicate_field(self):
+        """Duplicate the currently selected field (copy + paste in one action)"""
+        if not self.field_manager.selected_field:
+            self.status_bar.set_status("No field selected to duplicate")
+            return
+        
+        # Store the original clipboard field
+        original_clipboard = self.clipboard_field
+        
+        # Copy the current field
+        self.copy_field()
+        
+        # Paste it
+        self.paste_field()
+        
+        # Restore the original clipboard
+        self.clipboard_field = original_clipboard
     
     def previous_page(self):
         """Go to previous page"""
@@ -355,6 +455,152 @@ class PdfFormMakerApp:
         """Update the zoom percentage in status bar"""
         zoom_percentage = self.pdf_handler.get_zoom_percentage()
         self.status_bar.set_zoom(zoom_percentage)
+    
+    # Sidebar callback methods
+    def on_sidebar_field_select(self, field):
+        """Handle field selection from sidebar"""
+        self.field_manager.select_field(field)
+        self.status_bar.set_status(f"Selected {field.type.value} field '{field.name}'")
+    
+    def on_sidebar_field_delete(self, field):
+        """Handle field deletion from sidebar"""
+        if self.field_manager.delete_field(field):
+            self._update_sidebar()
+            self.status_bar.set_status(f"Deleted {field.type.value} field '{field.name}'")
+    
+    def on_sidebar_field_edit(self, field):
+        """Handle field editing from sidebar"""
+        self._edit_field_properties(field)
+    
+    def on_sidebar_field_duplicate(self, field):
+        """Handle field duplication from sidebar"""
+        self._duplicate_field(field)
+    
+    def _edit_field_properties(self, field):
+        """Open field properties dialog"""
+        # Create a simple property editor dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Edit {field.type.value} Field")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
+        
+        # Field name
+        tk.Label(dialog, text="Field Name:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(20, 5))
+        name_var = tk.StringVar(value=field.name)
+        name_entry = tk.Entry(dialog, textvariable=name_var, font=('Arial', 10))
+        name_entry.pack(fill='x', padx=20, pady=(0, 10))
+        
+        # Field type (readonly)
+        tk.Label(dialog, text="Field Type:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
+        type_label = tk.Label(dialog, text=field.type.value.title(), font=('Arial', 10), fg=AppConstants.FIELD_COLORS[field.type])
+        type_label.pack(anchor='w', padx=20, pady=(0, 10))
+        
+        # Page number (readonly)
+        tk.Label(dialog, text="Page:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
+        page_label = tk.Label(dialog, text=f"Page {field.page_num + 1}", font=('Arial', 10))
+        page_label.pack(anchor='w', padx=20, pady=(0, 10))
+        
+        # Options for dropdown
+        format_frame = None
+        format_var = None
+        if field.type == FieldType.DATETIME:
+            tk.Label(dialog, text="Date Format:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
+            format_var = tk.StringVar(value=field.date_format or "MM/DD/YYYY")
+            
+            format_frame = tk.Frame(dialog)
+            format_frame.pack(fill='x', padx=20, pady=(0, 10))
+            
+            # Format dropdown
+            format_options = ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD", "DD MMM YYYY", "MMM DD, YYYY"]
+            format_combo = tk.StringVar()
+            format_combo.set(format_var.get())
+            
+            format_entry = tk.Entry(format_frame, textvariable=format_combo, font=('Arial', 10))
+            format_entry.pack(fill='x')
+            
+            # Add some example formats as buttons
+            examples_frame = tk.Frame(dialog)
+            examples_frame.pack(fill='x', padx=20, pady=(5, 10))
+            
+            for fmt in format_options:
+                btn = tk.Button(examples_frame, text=fmt, 
+                              command=lambda f=fmt: format_combo.set(f),
+                              font=('Arial', 8), relief='flat', bg='#e0e0e0')
+                btn.pack(side='left', padx=(0, 5), pady=2)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(fill='x', padx=20, pady=20)
+        
+        def save_changes():
+            # Update field name
+            new_name = name_var.get().strip()
+            if new_name and new_name != field.name:
+                field.name = new_name
+            
+            # Update date format for datetime
+            if field.type == FieldType.DATETIME and format_combo:
+                new_format = format_combo.get().strip()
+                if new_format:
+                    field.date_format = new_format
+            
+            # Refresh display
+            self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+            self._update_sidebar()
+            
+            dialog.destroy()
+            self.status_bar.set_status(f"Updated {field.type.value} field '{field.name}'")
+        
+        def cancel_changes():
+            dialog.destroy()
+        
+        tk.Button(button_frame, text="Save", command=save_changes, bg='#4CAF50', fg='white', font=('Arial', 10)).pack(side='right', padx=(5, 0))
+        tk.Button(button_frame, text="Cancel", command=cancel_changes, bg='#f44336', fg='white', font=('Arial', 10)).pack(side='right')
+        
+        # Focus on name entry
+        name_entry.focus_set()
+        name_entry.select_range(0, 'end')
+    
+    def _duplicate_field(self, field):
+        """Duplicate a field"""
+        # Create a copy of the field with slight offset
+        offset = 20  # PDF units
+        
+        # Get current field's PDF coordinates
+        pdf_rect = field.rect.copy()
+        new_rect = [pdf_rect[0] + offset, pdf_rect[1] + offset, pdf_rect[2] + offset, pdf_rect[3] + offset]
+        
+        # Create new field
+        new_field = self.field_manager.create_field(
+            field.type, 
+            0, 0,  # These will be overridden
+            field.page_num
+        )
+        
+        # Set the new position
+        new_field.rect = new_rect
+        
+        # Copy properties
+        if hasattr(field, 'options') and field.options:
+            new_field.options = field.options.copy()
+        if hasattr(field, 'group') and field.group:
+            new_field.group = field.group
+        if hasattr(field, 'value') and field.value:
+            new_field.value = field.value
+        
+        # Redraw and update
+        self.field_manager.redraw_fields_for_page(self.pdf_handler.current_page)
+        self._update_sidebar()
+        self.status_bar.set_status(f"Duplicated {field.type.value} field")
+    
+    def _update_sidebar(self):
+        """Update the sidebar with current fields"""
+        if hasattr(self, 'sidebar'):
+            self.sidebar.update_fields(self.field_manager.fields)
     
     def on_closing(self):
         """Handle application closing"""

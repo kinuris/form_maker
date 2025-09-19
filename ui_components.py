@@ -61,8 +61,7 @@ class ToolbarFrame(tk.Frame):
         tools = [
             ('Text Field', FieldType.TEXT),
             ('Checkbox', FieldType.CHECKBOX),
-            ('Radio Button', FieldType.RADIO),
-            ('Dropdown', FieldType.DROPDOWN),
+            ('Date/Time', FieldType.DATETIME),
             ('Signature', FieldType.SIGNATURE)
         ]
         
@@ -426,3 +425,293 @@ class ScrollableCanvas(tk.Frame):
     def get_canvas_coords(self, event):
         """Get canvas coordinates from event (accounting for scrolling)"""
         return self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+
+
+class FieldsSidebar(tk.Frame):
+    """Sidebar for managing form fields with quick actions"""
+    
+    def __init__(self, parent, on_field_select: Callable = None, on_field_delete: Callable = None, 
+                 on_field_edit: Callable = None, on_field_duplicate: Callable = None):
+        """
+        Initialize the fields sidebar
+        
+        Args:
+            parent: Parent widget
+            on_field_select: Callback when a field is selected
+            on_field_delete: Callback when a field is deleted
+            on_field_edit: Callback when a field is edited
+            on_field_duplicate: Callback when a field is duplicated
+        """
+        super().__init__(parent, bg='#f5f5f5', width=250)
+        self.pack_propagate(False)
+        
+        self.on_field_select = on_field_select
+        self.on_field_delete = on_field_delete
+        self.on_field_edit = on_field_edit
+        self.on_field_duplicate = on_field_duplicate
+        
+        self.fields = []
+        self.selected_field = None
+        self.field_items = {}  # Map field name to UI items
+        
+        self._create_widgets()
+    
+    def _create_widgets(self):
+        """Create sidebar widgets"""
+        # Header
+        header_frame = tk.Frame(self, bg='#e0e0e0', height=40)
+        header_frame.pack(fill='x', padx=5, pady=5)
+        header_frame.pack_propagate(False)
+        
+        header_label = tk.Label(
+            header_frame,
+            text="Form Fields",
+            bg='#e0e0e0',
+            font=('Arial', 12, 'bold'),
+            anchor='w'
+        )
+        header_label.pack(side='left', padx=10, pady=10)
+        
+        # Fields count
+        self.count_label = tk.Label(
+            header_frame,
+            text="(0)",
+            bg='#e0e0e0',
+            font=('Arial', 10),
+            anchor='e',
+            fg='#666666'
+        )
+        self.count_label.pack(side='right', padx=10, pady=10)
+        
+        # Scrollable fields list
+        self.list_frame = tk.Frame(self, bg='#f5f5f5')
+        self.list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Scrollbar for fields list
+        self.scrollbar = tk.Scrollbar(self.list_frame)
+        self.scrollbar.pack(side='right', fill='y')
+        
+        self.canvas = tk.Canvas(
+            self.list_frame,
+            bg='#f5f5f5',
+            yscrollcommand=self.scrollbar.set,
+            highlightthickness=0
+        )
+        self.canvas.pack(side='left', fill='both', expand=True)
+        self.scrollbar.config(command=self.canvas.yview)
+        
+        # Inner frame for field items
+        self.inner_frame = tk.Frame(self.canvas, bg='#f5f5f5')
+        self.canvas_window = self.canvas.create_window(0, 0, anchor='nw', window=self.inner_frame)
+        
+        # Bind canvas resize
+        self.canvas.bind('<Configure>', self._on_canvas_configure)
+        self.inner_frame.bind('<Configure>', self._on_frame_configure)
+        
+        # Quick actions frame
+        actions_frame = tk.Frame(self, bg='#e0e0e0', height=50)
+        actions_frame.pack(fill='x', padx=5, pady=5)
+        actions_frame.pack_propagate(False)
+        
+        # Quick action buttons
+        self.edit_btn = tk.Button(
+            actions_frame,
+            text="Edit",
+            command=self._edit_selected,
+            bg='#4CAF50',
+            fg='white',
+            font=('Arial', 9),
+            state='disabled'
+        )
+        self.edit_btn.pack(side='left', padx=2, pady=5)
+        
+        self.duplicate_btn = tk.Button(
+            actions_frame,
+            text="Duplicate",
+            command=self._duplicate_selected,
+            bg='#2196F3',
+            fg='white',
+            font=('Arial', 9),
+            state='disabled'
+        )
+        self.duplicate_btn.pack(side='left', padx=2, pady=5)
+        
+        self.delete_btn = tk.Button(
+            actions_frame,
+            text="Delete",
+            command=self._delete_selected,
+            bg='#f44336',
+            fg='white',
+            font=('Arial', 9),
+            state='disabled'
+        )
+        self.delete_btn.pack(side='left', padx=2, pady=5)
+        
+        # Clear all button
+        self.clear_all_btn = tk.Button(
+            actions_frame,
+            text="Clear All",
+            command=self._clear_all_fields,
+            bg='#ff9800',
+            fg='white',
+            font=('Arial', 9),
+            state='disabled'
+        )
+        self.clear_all_btn.pack(side='right', padx=2, pady=5)
+    
+    def _on_canvas_configure(self, event):
+        """Handle canvas resize"""
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+    
+    def _on_frame_configure(self, event):
+        """Handle frame resize"""
+        self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+    
+    def update_fields(self, fields):
+        """Update the fields list"""
+        self.fields = fields
+        self._refresh_field_list()
+        self._update_count()
+        self._update_action_buttons()
+    
+    def _refresh_field_list(self):
+        """Refresh the fields list display"""
+        # Clear existing items
+        for widget in self.inner_frame.winfo_children():
+            widget.destroy()
+        self.field_items.clear()
+        
+        # Add field items
+        for i, field in enumerate(self.fields):
+            self._create_field_item(field, i)
+    
+    def _create_field_item(self, field, index):
+        """Create a field item in the list"""
+        # Field container
+        item_frame = tk.Frame(
+            self.inner_frame,
+            bg='white' if field != self.selected_field else '#e3f2fd',
+            relief='solid',
+            bd=1,
+            pady=5
+        )
+        item_frame.pack(fill='x', padx=2, pady=2)
+        
+        # Field info
+        info_frame = tk.Frame(item_frame, bg=item_frame['bg'])
+        info_frame.pack(fill='x', padx=8, pady=4)
+        
+        # Field type and name
+        type_label = tk.Label(
+            info_frame,
+            text=field.type.value.title(),
+            font=('Arial', 10, 'bold'),
+            bg=item_frame['bg'],
+            fg=AppConstants.FIELD_COLORS[field.type],
+            anchor='w'
+        )
+        type_label.pack(anchor='w')
+        
+        name_label = tk.Label(
+            info_frame,
+            text=field.name,
+            font=('Arial', 9),
+            bg=item_frame['bg'],
+            fg='#666666',
+            anchor='w'
+        )
+        name_label.pack(anchor='w')
+        
+        # Page info
+        page_label = tk.Label(
+            info_frame,
+            text=f"Page {field.page_num + 1}",
+            font=('Arial', 8),
+            bg=item_frame['bg'],
+            fg='#999999',
+            anchor='w'
+        )
+        page_label.pack(anchor='w')
+        
+        # Click to select
+        def on_click(event, f=field):
+            self.select_field(f)
+            if self.on_field_select:
+                self.on_field_select(f)
+        
+        # Bind click events
+        for widget in [item_frame, info_frame, type_label, name_label, page_label]:
+            widget.bind('<Button-1>', on_click)
+            widget.bind('<Enter>', lambda e, frame=item_frame: frame.config(bg='#f0f0f0' if frame['bg'] == 'white' else '#bbdefb'))
+            widget.bind('<Leave>', lambda e, frame=item_frame, f=field: frame.config(bg='white' if f != self.selected_field else '#e3f2fd'))
+        
+        self.field_items[field.name] = item_frame
+    
+    def select_field(self, field):
+        """Select a field in the list"""
+        old_selected = self.selected_field
+        self.selected_field = field
+        
+        # Update visual selection
+        if old_selected and old_selected.name in self.field_items:
+            self.field_items[old_selected.name].config(bg='white')
+            for child in self.field_items[old_selected.name].winfo_children():
+                self._update_widget_bg(child, 'white')
+        
+        if field and field.name in self.field_items:
+            self.field_items[field.name].config(bg='#e3f2fd')
+            for child in self.field_items[field.name].winfo_children():
+                self._update_widget_bg(child, '#e3f2fd')
+        
+        self._update_action_buttons()
+    
+    def _update_widget_bg(self, widget, bg):
+        """Recursively update widget background"""
+        try:
+            widget.config(bg=bg)
+            for child in widget.winfo_children():
+                self._update_widget_bg(child, bg)
+        except:
+            pass  # Some widgets might not support bg
+    
+    def _update_count(self):
+        """Update the fields count display"""
+        count = len(self.fields)
+        self.count_label.config(text=f"({count})")
+    
+    def _update_action_buttons(self):
+        """Update action button states"""
+        has_fields = len(self.fields) > 0
+        has_selection = self.selected_field is not None
+        
+        state = 'normal' if has_selection else 'disabled'
+        self.edit_btn.config(state=state)
+        self.duplicate_btn.config(state=state)
+        self.delete_btn.config(state=state)
+        
+        self.clear_all_btn.config(state='normal' if has_fields else 'disabled')
+    
+    def _edit_selected(self):
+        """Edit the selected field"""
+        if self.selected_field and self.on_field_edit:
+            self.on_field_edit(self.selected_field)
+    
+    def _duplicate_selected(self):
+        """Duplicate the selected field"""
+        if self.selected_field and self.on_field_duplicate:
+            self.on_field_duplicate(self.selected_field)
+    
+    def _delete_selected(self):
+        """Delete the selected field"""
+        if self.selected_field and self.on_field_delete:
+            self.on_field_delete(self.selected_field)
+    
+    def _clear_all_fields(self):
+        """Clear all fields with confirmation"""
+        if len(self.fields) > 0:
+            import tkinter.messagebox as messagebox
+            if messagebox.askyesno("Clear All Fields", f"Are you sure you want to delete all {len(self.fields)} fields?"):
+                if self.on_field_delete:
+                    # Delete all fields
+                    for field in self.fields.copy():
+                        self.on_field_delete(field)

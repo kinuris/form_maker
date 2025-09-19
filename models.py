@@ -12,8 +12,7 @@ class FieldType(Enum):
     """Enumeration of supported form field types"""
     TEXT = "text"
     CHECKBOX = "checkbox"
-    RADIO = "radio"
-    DROPDOWN = "dropdown"
+    DATETIME = "datetime"
     SIGNATURE = "signature"
 
 
@@ -27,9 +26,8 @@ class FormField:
     canvas_id: Optional[int] = None
     
     # Type-specific properties
-    options: Optional[List[str]] = None  # For dropdowns
-    group: Optional[str] = None  # For radio buttons
-    value: Optional[str] = None  # For radio buttons
+    date_format: Optional[str] = None  # For datetime fields (e.g., "MM/DD/YYYY", "DD/MM/YYYY")
+    value: Optional[str] = None  # Default value for fields
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert field to dictionary for serialization"""
@@ -38,8 +36,7 @@ class FormField:
             'type': self.type.value,
             'page_num': self.page_num,
             'rect': self.rect,
-            'options': self.options,
-            'group': self.group,
+            'date_format': self.date_format,
             'value': self.value
         }
     
@@ -51,8 +48,7 @@ class FormField:
             type=FieldType(data['type']),
             page_num=data['page_num'],
             rect=data['rect'],
-            options=data.get('options'),
-            group=data.get('group'),
+            date_format=data.get('date_format'),
             value=data.get('value')
         )
 
@@ -81,8 +77,7 @@ class AppConstants:
     DEFAULT_FIELD_SIZES = {
         FieldType.TEXT: (100, 30),
         FieldType.CHECKBOX: (20, 20),
-        FieldType.RADIO: (20, 20),
-        FieldType.DROPDOWN: (120, 25),
+        FieldType.DATETIME: (120, 30),
         FieldType.SIGNATURE: (150, 50)
     }
     
@@ -90,8 +85,7 @@ class AppConstants:
     FIELD_COLORS = {
         FieldType.TEXT: '#2196F3',
         FieldType.CHECKBOX: '#FF9800',
-        FieldType.RADIO: '#9C27B0',
-        FieldType.DROPDOWN: '#607D8B',
+        FieldType.DATETIME: '#4CAF50',
         FieldType.SIGNATURE: '#795548'
     }
     

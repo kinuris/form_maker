@@ -246,19 +246,18 @@ class PDFHandler:
             widget.field_value = False
             widget.fill_color = (1, 1, 1)
             
-        elif field.type == FieldType.RADIO:
-            widget.field_type = fitz.PDF_WIDGET_TYPE_RADIOBUTTON
-            widget.field_name = field.group or field.name
-            widget.field_value = field.value or field.name
-            widget.fill_color = (1, 1, 1)
-            
-        elif field.type == FieldType.DROPDOWN:
-            widget.field_type = fitz.PDF_WIDGET_TYPE_COMBOBOX
-            widget.choice_values = field.options or ['Option 1', 'Option 2']
-            widget.field_value = widget.choice_values[0] if widget.choice_values else ""
+        elif field.type == FieldType.DATETIME:
+            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_value = field.value or ""
             widget.text_font = "helv"
             widget.text_fontsize = 11
             widget.fill_color = (1, 1, 1)
+            widget.border_color = (0.5, 0.5, 0.5)
+            widget.border_width = 1
+            # Add some JavaScript for date validation if needed
+            if hasattr(field, 'date_format') and field.date_format:
+                # Store the format as part of the field name for reference
+                widget.field_name = f"{field.name}_{field.date_format.replace('/', '_').replace('-', '_')}"
             
         elif field.type == FieldType.SIGNATURE:
             # For signature fields, create a text field with signature appearance
