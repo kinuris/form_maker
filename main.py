@@ -80,7 +80,8 @@ class PdfFormMakerApp:
             on_field_select=self.on_sidebar_field_select,
             on_field_delete=self.on_sidebar_field_delete,
             on_field_edit=self.on_sidebar_field_edit,
-            on_field_duplicate=self.on_sidebar_field_duplicate
+            on_field_duplicate=self.on_sidebar_field_duplicate,
+            on_field_name_changed=self.on_sidebar_field_name_changed
         )
         self.sidebar.pack(side='left', fill='y')
         
@@ -560,6 +561,13 @@ class PdfFormMakerApp:
     def on_sidebar_field_duplicate(self, field):
         """Handle field duplication from sidebar"""
         self._duplicate_field(field)
+    
+    def on_sidebar_field_name_changed(self, field, old_name, new_name):
+        """Handle field name change from sidebar"""
+        # Update the canvas display to reflect the name change
+        self.field_manager.refresh_canvas()
+        # Update status bar to show the change
+        self.status_bar.set_status(f"Field renamed from '{old_name}' to '{new_name}'")
     
     def _edit_field_properties(self, field):
         """Open field properties dialog"""

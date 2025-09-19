@@ -435,7 +435,7 @@ class FieldsSidebar(tk.Frame):
     """Sidebar for managing form fields with quick actions"""
     
     def __init__(self, parent, on_field_select: Callable = None, on_field_delete: Callable = None, 
-                 on_field_edit: Callable = None, on_field_duplicate: Callable = None):
+                 on_field_edit: Callable = None, on_field_duplicate: Callable = None, on_field_name_changed: Callable = None):
         """
         Initialize the fields sidebar
         
@@ -445,6 +445,7 @@ class FieldsSidebar(tk.Frame):
             on_field_delete: Callback when a field is deleted
             on_field_edit: Callback when a field is edited
             on_field_duplicate: Callback when a field is duplicated
+            on_field_name_changed: Callback when a field name is changed (field, old_name, new_name)
         """
         super().__init__(parent, bg='#f5f5f5', width=250)
         self.pack_propagate(False)
@@ -453,6 +454,7 @@ class FieldsSidebar(tk.Frame):
         self.on_field_delete = on_field_delete
         self.on_field_edit = on_field_edit
         self.on_field_duplicate = on_field_duplicate
+        self.on_field_name_changed = on_field_name_changed
         
         self.fields = []
         self.selected_field = None
@@ -632,6 +634,12 @@ class FieldsSidebar(tk.Frame):
         )
         name_label.pack(anchor='w')
         
+        # Add double-click to edit name functionality
+        def on_double_click_name(event, f=field, label=name_label, frame=info_frame):
+            self._start_name_edit(f, label, frame)
+        
+        name_label.bind('<Double-Button-1>', on_double_click_name)
+        
         # Page info
         page_label = tk.Label(
             info_frame,
@@ -725,3 +733,69 @@ class FieldsSidebar(tk.Frame):
                     # Delete all fields
                     for field in self.fields.copy():
                         self.on_field_delete(field)
+    
+    def _start_name_edit(self, field, name_label, parent_frame):
+        """Start editing a field name inline"""
+        # Store original values
+        original_name = field.name
+        label_pack_info = name_label.pack_info()
+        
+        # Hide the label
+        name_label.pack_forget()
+        
+        # Create entry widget for editing
+        name_var = tk.StringVar(value=original_name)
+        name_entry = tk.Entry(
+            parent_frame,
+            textvariable=name_var,
+            font=('Arial', 9),
+            bg='white',
+            fg='#333333',
+            width=20
+        )
+        name_entry.pack(**label_pack_info)
+        name_entry.focus_set()
+        name_entry.select_range(0, 'end')
+        
+        def finish_edit(save=True):
+            """Finish editing and restore label"""
+            if save:
+                new_name = name_var.get().strip()
+                if new_name and new_name != original_name:
+                    # Check for name conflicts
+                    if any(f.name == new_name for f in self.fields if f != field):
+                        import tkinter.messagebox as messagebox
+                        messagebox.showerror("Name Conflict", f"A field named '{new_name}' already exists. Please choose a different name.")
+                        return False  # Don't close the editor
+                    
+                    # Update field name
+                    old_name = field.name
+                    field.name = new_name
+                    
+                    # Update field_items mapping
+                    if old_name in self.field_items:
+                        self.field_items[new_name] = self.field_items.pop(old_name)
+                    
+                    # Notify parent of name change if callback exists
+                    if hasattr(self, 'on_field_name_changed') and self.on_field_name_changed:
+                        self.on_field_name_changed(field, old_name, new_name)
+            
+            # Restore the label
+            name_entry.destroy()
+            name_label.config(text=field.name)
+            name_label.pack(**label_pack_info)
+            return True
+        
+        def on_key(event):
+            """Handle key events in entry"""
+            if event.keysym == 'Return':
+                finish_edit(save=True)
+            elif event.keysym == 'Escape':
+                finish_edit(save=False)
+        
+        def on_focus_out(event):
+            """Handle focus lost"""
+            finish_edit(save=True)
+        
+        name_entry.bind('<Key>', on_key)
+        name_entry.bind('<FocusOut>', on_focus_out)
