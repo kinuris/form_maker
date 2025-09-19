@@ -670,7 +670,7 @@ class PdfFormMakerApp:
         # Options for dropdown
         format_frame = None
         format_var = None
-        if field.type == FieldType.DATETIME:
+        if field.type == FieldType.DATE:
             tk.Label(dialog, text="Date Format:", font=('Arial', 10, 'bold')).pack(anchor='w', padx=20, pady=(10, 5))
             format_var = tk.StringVar(value=field.date_format or "MM/DD/YYYY")
             
@@ -705,8 +705,8 @@ class PdfFormMakerApp:
             if new_name and new_name != field.name:
                 field.name = new_name
             
-            # Update date format for datetime
-            if field.type == FieldType.DATETIME and format_combo:
+            # Update date format for date fields
+            if field.type == FieldType.DATE and format_combo:
                 new_format = format_combo.get().strip()
                 if new_format:
                     field.date_format = new_format

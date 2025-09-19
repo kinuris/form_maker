@@ -61,7 +61,7 @@ class ToolbarFrame(tk.Frame):
         tools = [
             ('Text Field', FieldType.TEXT),
             ('Checkbox', FieldType.CHECKBOX),
-            ('Date/Time', FieldType.DATETIME),
+            ('Date', FieldType.DATE),
             ('Signature', FieldType.SIGNATURE)
         ]
         

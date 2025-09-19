@@ -94,12 +94,26 @@ class PDFHandler:
                         if field_type is None:
                             continue  # Skip unsupported field types
                         
+                        # Enhanced detection for DATE fields
+                        # Check if this is actually a DATE field based on field name pattern
+                        field_name = widget.field_name or f"field_{len(detected_fields) + 1}"
+                        if field_type == FieldType.TEXT and self._is_date_field(field_name):
+                            field_type = FieldType.DATE
+                        
                         # Get field rectangle in PDF coordinates
                         rect = widget.rect
                         pdf_rect = [rect.x0, rect.y0, rect.x1, rect.y1]
                         
                         # Create unique identifier for this field (name + position + page)
                         field_name = widget.field_name or f"field_{len(detected_fields) + 1}"
+                        # Get field rectangle in PDF coordinates
+                        rect = widget.rect
+                        pdf_rect = [rect.x0, rect.y0, rect.x1, rect.y1]
+                        
+                        # Clean up field name (remove date type encoding if present)
+                        clean_field_name = self._clean_field_name(field_name)
+                        
+                        # Create unique identifier for this field (name + position + page)
                         field_id = (field_name, page_num, tuple(pdf_rect))
                         
                         # Skip if we've already seen this field
@@ -111,7 +125,7 @@ class PDFHandler:
                         
                         # Create FormField object
                         field = FormField(
-                            name=field_name,
+                            name=clean_field_name,
                             type=field_type,
                             page_num=page_num,
                             rect=pdf_rect.copy(),  # Store PDF coordinates
@@ -119,9 +133,9 @@ class PDFHandler:
                         )
                         
                         # Add type-specific properties
-                        if field_type == FieldType.DATETIME:
-                            # Try to detect date format from field name or value
-                            field.date_format = self._detect_date_format(widget.field_name, widget.field_value)
+                        if field_type == FieldType.DATE:
+                            # Extract date format from field name or use default
+                            field.date_format = self._extract_date_format_from_name(field_name) or self._detect_date_format(clean_field_name, widget.field_value)
                         
                         detected_fields.append(field)
                         print(f"Detected {field_type.value} field: '{field.name}' on page {page_num + 1}")
@@ -153,8 +167,8 @@ class PDFHandler:
             fitz.PDF_WIDGET_TYPE_TEXT: FieldType.TEXT,
             fitz.PDF_WIDGET_TYPE_CHECKBOX: FieldType.CHECKBOX,
             fitz.PDF_WIDGET_TYPE_SIGNATURE: FieldType.SIGNATURE,
-            # Map combobox to datetime for now, could be enhanced with detection logic
-            fitz.PDF_WIDGET_TYPE_COMBOBOX: FieldType.DATETIME,
+            # Map combobox to date field for now, could be enhanced with detection logic
+            fitz.PDF_WIDGET_TYPE_COMBOBOX: FieldType.DATE,
         }
         
         return type_mapping.get(pdf_field_type)
@@ -202,6 +216,57 @@ class PDFHandler:
                         return "YYYY-MM-DD"
         
         return default_format
+    
+    def _is_date_field(self, field_name):
+        """Check if a field is a DATE field based on its name pattern."""
+        if not field_name:
+            return False
+        
+        # Check for date type encoding in field name
+        if field_name.startswith("date_") or "_date_" in field_name:
+            return True
+        
+        # Check for common date field names
+        date_keywords = ["date", "birth", "created", "modified", "expiry", "deadline"]
+        name_lower = field_name.lower()
+        return any(keyword in name_lower for keyword in date_keywords)
+    
+    def _clean_field_name(self, field_name):
+        """Remove date type encoding from field name."""
+        if not field_name:
+            return field_name
+        
+        # Remove date type prefix
+        if field_name.startswith("date_"):
+            return field_name[5:]  # Remove "date_" prefix
+        
+        # Remove date type infix
+        if "_date_" in field_name:
+            parts = field_name.split("_date_")
+            if len(parts) == 2:
+                return parts[0] + "_" + parts[1]
+        
+        return field_name
+    
+    def _extract_date_format_from_name(self, field_name):
+        """Extract date format information from encoded field name."""
+        if not field_name or "_date_" not in field_name:
+            return None
+        
+        # Look for format information after _date_
+        parts = field_name.split("_date_")
+        if len(parts) >= 2:
+            format_part = parts[1]
+            # Common format encodings
+            format_mapping = {
+                "mmddyyyy": "MM/DD/YYYY",
+                "ddmmyyyy": "DD/MM/YYYY",
+                "yyyymmdd": "YYYY-MM-DD",
+                "iso": "YYYY-MM-DD"
+            }
+            return format_mapping.get(format_part.lower())
+        
+        return None
     
     def display_page(self, page_num: int = None) -> bool:
         """
@@ -416,18 +481,26 @@ class PDFHandler:
             widget.field_value = False
             widget.fill_color = (1, 1, 1)
             
-        elif field.type == FieldType.DATETIME:
+        elif field.type == FieldType.DATE:
             widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
             widget.field_value = field.value or ""
             widget.text_font = "helv"
             widget.text_fontsize = 11
             widget.fill_color = (1, 1, 1)
-            widget.border_color = (0.5, 0.5, 0.5)
+            widget.border_color = (0.2, 0.4, 0.8)  # Blue border to indicate date field
             widget.border_width = 1
-            # Add some JavaScript for date validation if needed
-            if hasattr(field, 'date_format') and field.date_format:
-                # Store the format as part of the field name for reference
-                widget.field_name = f"{field.name}_{field.date_format.replace('/', '_').replace('-', '_')}"
+            
+            # Try to set text format to DATE (may not persist due to PyMuPDF limitations)
+            widget.text_format = fitz.PDF_WIDGET_TX_FORMAT_DATE
+            
+            # Encode the field type in the field name for preservation
+            widget.field_name = f"date_{field.name}"
+            
+            # Add comprehensive JavaScript for date validation and formatting
+            date_format = getattr(field, 'date_format', 'MM/DD/YYYY')
+            widget.script_change = self._generate_date_validation_script(date_format)
+            widget.script_format = self._generate_date_format_script(date_format)
+            widget.script_focus = self._generate_date_focus_script(date_format)
             
         elif field.type == FieldType.SIGNATURE:
             # For signature fields, create a text field with signature appearance
@@ -595,3 +668,95 @@ class PDFHandler:
             new_zoom = self.zoom_state.zoom_level - zoom_factor
         
         return self.set_zoom(new_zoom, canvas_x, canvas_y)
+    
+    def _generate_date_validation_script(self, date_format):
+        """Generate JavaScript for date field validation"""
+        return f"""
+// Date validation for format: {date_format}
+var value = event.value;
+if (value && value.length > 0) {{
+    // Remove any non-numeric characters except slashes
+    var cleanValue = value.replace(/[^\\d\\/]/g, '');
+    
+    // Check basic format
+    var datePattern = /^\\d{{1,2}}\\/\\d{{1,2}}\\/\\d{{4}}$/;
+    if (!datePattern.test(cleanValue)) {{
+        app.alert('Please enter date in {date_format} format (e.g., 12/31/2024)', 1);
+        event.value = '';
+        return;
+    }}
+    
+    // Validate actual date values
+    var parts = cleanValue.split('/');
+    var month = parseInt(parts[0], 10);
+    var day = parseInt(parts[1], 10);
+    var year = parseInt(parts[2], 10);
+    
+    if (month < 1 || month > 12) {{
+        app.alert('Month must be between 1 and 12', 1);
+        event.value = '';
+        return;
+    }}
+    
+    if (day < 1 || day > 31) {{
+        app.alert('Day must be between 1 and 31', 1);
+        event.value = '';
+        return;
+    }}
+    
+    if (year < 1900 || year > 2100) {{
+        app.alert('Year must be between 1900 and 2100', 1);
+        event.value = '';
+        return;
+    }}
+    
+    // Check for valid date (e.g., not Feb 30)
+    var testDate = new Date(year, month - 1, day);
+    if (testDate.getMonth() !== (month - 1) || testDate.getDate() !== day) {{
+        app.alert('This is not a valid calendar date', 1);
+        event.value = '';
+        return;
+    }}
+    
+    // If we get here, format the date properly
+    event.value = (month < 10 ? '0' + month : month) + '/' + 
+                  (day < 10 ? '0' + day : day) + '/' + year;
+}}
+"""
+    
+    def _generate_date_format_script(self, date_format):
+        """Generate JavaScript for date field formatting"""
+        return f"""
+// Auto-format date as user types for {date_format}
+var value = event.value;
+if (value) {{
+    // Remove non-numeric characters except slashes
+    var cleaned = value.replace(/[^\\d\\/]/g, '');
+    
+    // Auto-add slashes as user types
+    if (cleaned.length >= 3 && cleaned.charAt(2) !== '/') {{
+        cleaned = cleaned.substring(0, 2) + '/' + cleaned.substring(2);
+    }}
+    if (cleaned.length >= 6 && cleaned.charAt(5) !== '/') {{
+        cleaned = cleaned.substring(0, 5) + '/' + cleaned.substring(5);
+    }}
+    
+    // Limit to MM/DD/YYYY format length
+    if (cleaned.length > 10) {{
+        cleaned = cleaned.substring(0, 10);
+    }}
+    
+    event.value = cleaned;
+}}
+"""
+    
+    def _generate_date_focus_script(self, date_format):
+        """Generate JavaScript for date field focus events"""
+        return f"""
+// Date field focus script for {date_format}
+if (!event.value || event.value.length === 0) {{
+    // Show placeholder text or help
+    event.target.strokeColor = ['RGB', 0.2, 0.4, 0.8];
+    // Note: We can't set placeholder text directly, but the blue border indicates date field
+}}
+"""

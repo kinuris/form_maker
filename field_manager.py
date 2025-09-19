@@ -73,7 +73,7 @@ class FieldManager:
         field.pdf_rect = pdf_rect.copy()
         
         # Add type-specific properties
-        if field_type == FieldType.DATETIME:
+        if field_type == FieldType.DATE:
             field.date_format = "MM/DD/YYYY"  # Default format
             field.value = ""  # Default empty value
         

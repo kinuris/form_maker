@@ -12,7 +12,7 @@ class FieldType(Enum):
     """Enumeration of supported form field types"""
     TEXT = "text"
     CHECKBOX = "checkbox"
-    DATETIME = "datetime"
+    DATE = "date"
     SIGNATURE = "signature"
 
 
@@ -26,7 +26,7 @@ class FormField:
     canvas_id: Optional[int] = None
     
     # Type-specific properties
-    date_format: Optional[str] = None  # For datetime fields (e.g., "MM/DD/YYYY", "DD/MM/YYYY")
+    date_format: Optional[str] = None  # For date fields (e.g., "MM/DD/YYYY", "DD/MM/YYYY")
     value: Optional[str] = None  # Default value for fields
     
     def to_dict(self) -> Dict[str, Any]:
@@ -77,7 +77,7 @@ class AppConstants:
     DEFAULT_FIELD_SIZES = {
         FieldType.TEXT: (100, 30),
         FieldType.CHECKBOX: (20, 20),
-        FieldType.DATETIME: (120, 30),
+        FieldType.DATE: (120, 30),
         FieldType.SIGNATURE: (150, 50)
     }
     
@@ -85,7 +85,7 @@ class AppConstants:
     FIELD_COLORS = {
         FieldType.TEXT: '#2196F3',
         FieldType.CHECKBOX: '#FF9800',
-        FieldType.DATETIME: '#4CAF50',
+        FieldType.DATE: '#4CAF50',
         FieldType.SIGNATURE: '#795548'
     }
     
